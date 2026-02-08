@@ -1,67 +1,30 @@
+from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 
 
+BASE_DIR = Path(__file__).resolve().parents[2]  # .../diary-backend/app/core -> .../diary-backend
+ENV_FILE = BASE_DIR / ".env"
+
+
 class Settings(BaseSettings):
-    # Pydantic v2 settings
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(ENV_FILE),          # ✅ 절대경로로 .env 지정
         env_file_encoding="utf-8",
         case_sensitive=False,
-        extra="ignore",  # ✅ 모르는 env가 있어도 무시 (실무에서 편함)
+        extra="ignore",
     )
 
-    # -------------------------
-    # App
-    # -------------------------
     APP_NAME: str = "Tarota Diary Backend"
     ENV: str = "development"
     DEBUG: bool = True
 
-    # -------------------------
-    # Server
-    # -------------------------
-    HOST: str = "127.0.0.1"
-    PORT: int = 8000
+    # ✅ .env 없으면 바로 에러 나게 (sqlite로 떨어지지 않게)
+    DATABASE_URL: str = Field(..., description="Database connection URL")
 
-    # -------------------------
-    # Database
-    # -------------------------
-    DATABASE_URL: str = "sqlite:///./diary.db"
-
-    # (옵션) 개별 값도 쓰고 싶으면 유지
-    DB_DRIVER: str | None = None
-    DB_HOST: str | None = None
-    DB_PORT: int | None = None
-    DB_NAME: str | None = None
-    DB_USER: str | None = None
-    DB_PASSWORD: str | None = None
-
-    # -------------------------
-    # Security / Auth
-    # -------------------------
-    SECRET_KEY: str = Field(default="change_this", min_length=8)
+    SECRET_KEY: str = Field(..., min_length=8)
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
-
-    # -------------------------
-    # Password hashing
-    # -------------------------
-    BCRYPT_ROUNDS: int = 12
-
-    # -------------------------
-    # LLM (Future)
-    # -------------------------
-    OPENAI_API_KEY: str | None = None
-    LLM_MODEL: str = "gpt-4o-mini"
-    LLM_TEMPERATURE: float = 0.7
-
-    # -------------------------
-    # Notification (Future)
-    # -------------------------
-    DEFAULT_FORTUNE_HOUR: int = 8
-    DEFAULT_DIARY_HOUR: int = 20
-    TIMEZONE: str = "Asia/Seoul"
 
 
 settings = Settings()
