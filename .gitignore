@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Virtualenv
+venv/
+ENV/
+.env/
+.venv/
+.python-version
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Alembic
+alembic/versions/__pycache__/
+
+# Editor folders
+.vscode/
+.idea/
+.pytest_cache/
+.mypy_cache/
+.coverage
+
+# Env files
+.env*
+
+# Others
+*.sqlite3
+*.db
+*.pid
+*.bak
+*.swp
+*.tmp
+*.tar.gz
+*.zip
+*.gz

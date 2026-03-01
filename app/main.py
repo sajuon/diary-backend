@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
@@ -19,6 +20,9 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
 )
+
+# static 폴더 서빙
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # ---------------------------
 # CORS

@@ -9,11 +9,33 @@ def get_user_by_id(db: Session, user_id: int) -> Optional[User]:
 
 
 def get_user_by_email(db: Session, email: str) -> Optional[User]:
+    # email may be null/None for social-only accounts
     return db.query(User).filter(User.email == email).first()
 
 
-def create_user(db: Session, email: str, hashed_password: str, nickname: str) -> User:
-    user = User(email=email, password=hashed_password, nickname=nickname)
+def get_user_by_provider(db: Session, provider: str, provider_id: str) -> Optional[User]:
+    return (
+        db.query(User)
+        .filter(User.provider == provider, User.provider_id == provider_id)
+        .first()
+    )
+
+
+def create_user(
+    db: Session,
+    nickname: str,
+    email: Optional[str] = None,
+    hashed_password: Optional[str] = None,
+    provider: str = "local",
+    provider_id: Optional[str] = None,
+) -> User:
+    user = User(
+        email=email,
+        password=hashed_password,
+        nickname=nickname,
+        provider=provider,
+        provider_id=provider_id,
+    )
     db.add(user)
     db.commit()
     db.refresh(user)

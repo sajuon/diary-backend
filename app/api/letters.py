@@ -78,23 +78,17 @@ def get_today_letter(
     return letter
 
 
-@router.get("", response_model=list[OtterLetterResponse])
-def list_letters(
-    month: str = Query(..., description="YYYY-MM (예: 2026-02)"),
+@router.get("/{letter_id}", response_model=OtterLetterResponse)
+def get_letter_by_id(
+    letter_id: int,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    start = f"{month}-01"
-    end = f"{month}-31"
-
-    letters = (
+    letter = (
         db.query(OtterLetter)
-        .filter(
-            OtterLetter.user_id == user.id,
-            OtterLetter.letter_date >= start,
-            OtterLetter.letter_date <= end,
-        )
-        .order_by(OtterLetter.letter_date.desc())
-        .all()
+        .filter(OtterLetter.id == letter_id, OtterLetter.user_id == user.id)
+        .first()
     )
-    return letters
+    if not letter:
+        raise HTTPException(status_code=404, detail="편지를 찾을 수 없습니다")
+    return letter
