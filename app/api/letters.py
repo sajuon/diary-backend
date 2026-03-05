@@ -1,5 +1,6 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -9,7 +10,7 @@ from app.models.diary import DiaryEntry
 from app.models.fortune import DailyFortune
 from app.models.letter import OtterLetter
 from app.schemas.letter import OtterLetterResponse
-from app.services.letter_generator import generate_otter_letter  # 다음 단계에서 구현
+from app.services.letter_generator import generate_otter_letter  # async
 
 
 router = APIRouter(prefix="/api/letters", tags=["Letters"])
@@ -20,7 +21,8 @@ def kst_today_date():
 
 
 @router.post("/generate/today", response_model=OtterLetterResponse)
-def generate_today_letter(
+async def generate_today_letter(
+    force: bool = Query(False, description="true면 기존 편지를 삭제하고 재생성합니다"),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -34,10 +36,17 @@ def generate_today_letter(
     if not entry:
         raise HTTPException(status_code=400, detail="오늘 일기가 없습니다. 먼저 일기를 작성하세요.")
 
-    # 이미 생성되었으면 그대로 반환(멱등)
+    # 이미 생성된 편지 확인
     exists = db.query(OtterLetter).filter(OtterLetter.diary_entry_id == entry.id).first()
-    if exists:
+
+    # force=false면 멱등 반환
+    if exists and not force:
         return exists
+
+    # force=true면 기존 편지 삭제 후 재생성
+    if exists and force:
+        db.delete(exists)
+        db.commit()
 
     fortune = (
         db.query(DailyFortune)
@@ -45,7 +54,7 @@ def generate_today_letter(
         .first()
     )
 
-    data = generate_otter_letter(user=user, diary_entry=entry, fortune=fortune)
+    data = await generate_otter_letter(user=user, diary_entry=entry, fortune=fortune)
 
     letter = OtterLetter(
         user_id=user.id,

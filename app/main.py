@@ -8,6 +8,8 @@ from app.core.database import engine
 from app.models.base import Base
 from app.router import api_router
 
+import os
+
 # ---------------------------
 # App initialization
 # ---------------------------
@@ -21,16 +23,25 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# static 폴더 서빙
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# ---------------------------
+# Static folder (optional)
+# ---------------------------
+
+if os.path.isdir("static"):
+    app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # ---------------------------
-# CORS
+# CORS (WSL + Local Dev 안전 설정)
 # ---------------------------
+
+origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # TODO: 배포 시 프론트 도메인으로 제한
+    allow_origins=origins,   # ❗ "*" 대신 명확히 지정
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -39,9 +50,9 @@ app.add_middleware(
 # ---------------------------
 # DB init (DEV only)
 # ---------------------------
-# ⚠️ 개발 단계에서만 사용
-# ⚠️ 운영 환경에서는 Alembic 마이그레이션 사용 권장
-Base.metadata.create_all(bind=engine)
+
+if os.getenv("ENV", "dev") == "dev":
+    Base.metadata.create_all(bind=engine)
 
 # ---------------------------
 # Router
