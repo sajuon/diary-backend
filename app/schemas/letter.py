@@ -16,5 +16,8 @@ class OtterLetterResponse(BaseModel):
     element_hint: Optional[Dict[str, Any]] = None
     model: Optional[str] = None
 
+    is_read: bool
+    read_at: Optional[datetime] = None
+
     created_at: datetime
     updated_at: datetime

@@ -6,6 +6,8 @@ from sqlalchemy import (
     Text,
     String,
     JSON,
+    Boolean,
+    DateTime,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -39,6 +41,9 @@ class OtterLetter(TimestampMixin, Base):
 
     element_hint: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     model: Mapped[str | None] = mapped_column(String(50), nullable=True)
+
+    is_read: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    read_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user = relationship("User", back_populates="letters")
     diary_entry = relationship("DiaryEntry", back_populates="letter")

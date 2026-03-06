@@ -1,23 +1,11 @@
 from datetime import datetime
-from typing import Optional
-
 from pydantic import BaseModel, ConfigDict
-
-
-class NotificationSettingsUpdateRequest(BaseModel):
-    push_enabled: Optional[bool] = None
-    fortune_enabled: Optional[bool] = None
-    diary_reminder_enabled: Optional[bool] = None
-    reply_enabled: Optional[bool] = None
-    timezone: Optional[str] = None
 
 
 class NotificationSettingsResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
     user_id: int
-
     push_enabled: bool
     fortune_enabled: bool
     diary_reminder_enabled: bool
@@ -26,3 +14,11 @@ class NotificationSettingsResponse(BaseModel):
 
     created_at: datetime
     updated_at: datetime
+
+
+class NotificationSettingsUpdate(BaseModel):
+    push_enabled: bool
+    fortune_enabled: bool
+    diary_reminder_enabled: bool
+    reply_enabled: bool
+    timezone: str = "Asia/Seoul"

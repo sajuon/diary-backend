@@ -1,3 +1,5 @@
+# backend/app/main.py
+
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,6 +9,9 @@ from app.core.logging import setup_logging
 from app.core.database import engine
 from app.models.base import Base
 from app.router import api_router
+
+# ✅ Scheduler
+from app.jobs.scheduler import start_scheduler
 
 import os
 
@@ -53,6 +58,20 @@ app.add_middleware(
 
 if os.getenv("ENV", "dev") == "dev":
     Base.metadata.create_all(bind=engine)
+
+# ---------------------------
+# Startup / Shutdown (Scheduler)
+# ---------------------------
+
+@app.on_event("startup")
+def on_startup():
+    # ✅ 매일 23:00 KST 자동 편지 생성 작업 시작
+    start_scheduler()
+
+@app.on_event("shutdown")
+def on_shutdown():
+    # 필요하면 여기에서 scheduler.shutdown() 같은 처리를 추가할 수 있음
+    pass
 
 # ---------------------------
 # Router
