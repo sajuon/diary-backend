@@ -19,6 +19,32 @@ def get_vapid_public_key() -> str:
     return VAPID_PUBLIC_KEY
 
 
+def get_or_create_notification_settings(
+    db: Session,
+    user_id: int,
+) -> NotificationSettings:
+    settings = (
+        db.query(NotificationSettings)
+        .filter(NotificationSettings.user_id == user_id)
+        .first()
+    )
+    if settings:
+        return settings
+
+    settings = NotificationSettings(
+        user_id=user_id,
+        push_enabled=True,
+        fortune_enabled=True,
+        diary_reminder_enabled=True,
+        reply_enabled=True,
+        timezone="Asia/Seoul",
+    )
+    db.add(settings)
+    db.commit()
+    db.refresh(settings)
+    return settings
+
+
 def send_web_push_to_subscription(
     subscription: WebPushSubscription,
     title: str,
@@ -72,14 +98,7 @@ def send_web_push_to_user(
     url: str = "/",
     notification_type: str | None = None,
 ) -> dict:
-    settings = (
-        db.query(NotificationSettings)
-        .filter(NotificationSettings.user_id == user_id)
-        .first()
-    )
-
-    if not settings:
-        return {"sent": 0, "skipped": 0, "reason": "settings_not_found"}
+    settings = get_or_create_notification_settings(db, user_id)
 
     if not settings.push_enabled:
         return {"sent": 0, "skipped": 0, "reason": "push_disabled"}
@@ -101,6 +120,9 @@ def send_web_push_to_user(
         )
         .all()
     )
+
+    if not subscriptions:
+        return {"sent": 0, "skipped": 0, "reason": "no_active_subscriptions"}
 
     sent = 0
     skipped = 0

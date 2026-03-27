@@ -11,7 +11,7 @@ from app.models.base import Base
 from app.router import api_router
 
 # ✅ Scheduler
-from app.jobs.scheduler import run_startup_catchup, start_scheduler
+from app.jobs.scheduler import start_scheduler
 
 import os
 
@@ -42,14 +42,13 @@ if os.path.isdir("static"):
 origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "http://172.30.1.65:3000",
-    "https://haedori.ludo-lab.com",
-    "http://haedori.ludo-lab.com",
+    "http://100.104.234.83:3000",
+    "http://0.0.0.0:3000"
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=origins,   # ❗ "*" 대신 명확히 지정
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -67,10 +66,9 @@ if os.getenv("ENV", "dev") == "dev":
 # ---------------------------
 
 @app.on_event("startup")
-async def on_startup():
-    # ✅ 매일 00:00 KST 편지 생성, 06:00 KST 답장 알림 스케줄 시작
+def on_startup():
+    # ✅ 매일 23:00 KST 자동 편지 생성 작업 시작
     start_scheduler()
-    await run_startup_catchup()
 
 @app.on_event("shutdown")
 def on_shutdown():

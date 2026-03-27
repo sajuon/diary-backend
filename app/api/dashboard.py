@@ -39,37 +39,31 @@ def get_dashboard(
 ):
     today = kst_today_date()
 
-    # 오늘 일기
     today_diary = (
         db.query(DiaryEntry)
         .filter(DiaryEntry.user_id == user.id, DiaryEntry.entry_date == today)
         .first()
     )
 
-    # 오늘 운세
     today_fortune = (
         db.query(DailyFortune)
         .filter(DailyFortune.user_id == user.id, DailyFortune.fortune_date == today)
         .first()
     )
 
-    # 오늘 편지
     today_letter = (
         db.query(OtterLetter)
-        .filter(OtterLetter.user_id == user.id, OtterLetter.letter_date == today)
+        .filter(OtterLetter.user_id == user.id)
+        .order_by(OtterLetter.letter_date.desc(), OtterLetter.id.desc())
         .first()
     )
 
-    # 일기 통계
     total_diaries = (
         db.query(func.count(DiaryEntry.id))
         .filter(DiaryEntry.user_id == user.id)
         .scalar()
     )
 
-    # ✅ 연속 작성일 계산 (UX 개선 버전)
-    # - 오늘 일기가 없더라도 "어제까지 연속 기록"은 유지해서 보여줌
-    # - 오늘 쓰면 +1 되도록 동작
     has_today = today_diary is not None
     consecutive_days = 0
     check_date = today if has_today else (today - timedelta(days=1))
@@ -88,6 +82,7 @@ def get_dashboard(
     diary_stats = {
         "total_diaries": int(total_diaries or 0),
         "consecutive_days": consecutive_days,
+        "has_today": has_today,
     }
 
     return {

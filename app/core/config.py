@@ -1,5 +1,3 @@
-# app/core/config.py
-
 from pathlib import Path
 from typing import Optional
 
@@ -8,6 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 ENV_FILE = BASE_DIR / ".env"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -34,12 +33,20 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_SECRET: Optional[str] = None
     GOOGLE_REDIRECT_URI: Optional[str] = None
 
-    # ✅ Open WebUI(LLM) 연결 설정
-    LLM_BASE_URL: str = "http://125.134.126.240:3615"
-    LLM_API_KEY: str = Field(..., description="Open WebUI API key (Bearer)")
+    # LLM 연결 설정
+    LLM_BASE_URL: str = "http://open-webui:8080"
+    LLM_API_KEY: Optional[str] = Field(
+        default=None,
+        description="Open WebUI API key (Bearer). Raw Ollama only setups can leave this empty.",
+    )
     LLM_MODEL: str = "dori-text-v6"
+    QUESTION_LLM_MODEL: str = "dori-diary-question"
+    FORTUNE_LLM_MODEL: str = "saju-v0"
+    SAJU_LLM_MODEL: str = "saju-reading-v0"
+    LLM_PROVIDER: str = "auto"
+    LLM_FALLBACK_BASE_URLS: str = ""
 
-    # 49초 걸린 걸 봤으니 30초는 너무 짧음
     LLM_TIMEOUT_SEC: int = 180
+
 
 settings = Settings()

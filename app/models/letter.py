@@ -44,6 +44,11 @@ class OtterLetter(TimestampMixin, Base):
 
     is_read: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
     read_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reply_notified_at: Mapped[object | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        index=True,
+    )
 
     user = relationship("User", back_populates="letters")
     diary_entry = relationship("DiaryEntry", back_populates="letter")

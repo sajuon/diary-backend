@@ -5,6 +5,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Text,
     JSON,
+    String,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -28,7 +29,7 @@ class DiaryEntry(TimestampMixin, Base):
 
     entry_date: Mapped[object] = mapped_column(Date, nullable=False, index=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-
+    weather: Mapped[str | None] = mapped_column(String(20), nullable=True)
     mood_tags: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     user = relationship("User", back_populates="diary_entries")

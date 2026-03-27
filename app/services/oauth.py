@@ -8,13 +8,17 @@ class OAuthError(Exception):
 
 
 async def exchange_google_code(code: str, redirect_uri: Optional[str] = None) -> Dict[str, Optional[str]]:
-    """Google 인증 코드를 액세스 토큰으로 교환하고 사용자 정보 반환"""
     token_url = "https://oauth2.googleapis.com/token"
     from app.core.config import settings
+
     client_id = settings.GOOGLE_CLIENT_ID
     client_secret = settings.GOOGLE_CLIENT_SECRET
     redirect = redirect_uri or settings.GOOGLE_REDIRECT_URI
-    
+
+    print("GOOGLE_CLIENT_ID =", client_id)
+    print("REQUEST_REDIRECT_URI =", redirect_uri)
+    print("FINAL_REDIRECT_URI =", redirect)
+
     async with httpx.AsyncClient() as client:
         token_resp = await client.post(
             token_url,
@@ -27,16 +31,19 @@ async def exchange_google_code(code: str, redirect_uri: Optional[str] = None) ->
             },
             timeout=10,
         )
-        
+
+        print("GOOGLE TOKEN STATUS =", token_resp.status_code)
+        print("GOOGLE TOKEN BODY =", token_resp.text)
+
         if token_resp.status_code != 200:
             raise OAuthError(f"Google token exchange failed: {token_resp.text}")
-        
+
         token_data = token_resp.json()
         access_token = token_data.get("access_token")
-        
+
         if not access_token:
             raise OAuthError("No access_token in Google response")
-        
+
         return _get_google_user(access_token)
 
 
