@@ -17,7 +17,12 @@ class OtterLetterResponse(BaseModel):
     model: Optional[str] = None
 
     is_read: bool
+    is_favorite: bool
     read_at: Optional[datetime] = None
 
     created_at: datetime
     updated_at: datetime
+
+
+class OtterLetterFavoriteUpdateRequest(BaseModel):
+    is_favorite: bool

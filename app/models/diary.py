@@ -31,6 +31,7 @@ class DiaryEntry(TimestampMixin, Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     weather: Mapped[str | None] = mapped_column(String(20), nullable=True)
     mood_tags: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    summary_tag: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     user = relationship("User", back_populates="diary_entries")
 

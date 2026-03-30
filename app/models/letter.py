@@ -28,7 +28,6 @@ class OtterLetter(TimestampMixin, Base):
         nullable=False,
         index=True,
     )
-
     diary_entry_id: Mapped[int] = mapped_column(
         BigInteger,
         ForeignKey("diary_entries.id", ondelete="CASCADE"),
@@ -43,6 +42,7 @@ class OtterLetter(TimestampMixin, Base):
     model: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
     is_read: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    is_favorite: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
     read_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
     reply_notified_at: Mapped[object | None] = mapped_column(
         DateTime(timezone=True),

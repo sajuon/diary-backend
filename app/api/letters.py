@@ -12,7 +12,10 @@ from app.models.user import User
 from app.models.diary import DiaryEntry
 from app.models.fortune import DailyFortune
 from app.models.letter import OtterLetter
-from app.schemas.letter import OtterLetterResponse
+from app.schemas.letter import (
+    OtterLetterResponse,
+    OtterLetterFavoriteUpdateRequest,
+)
 from app.services.letter_generator import generate_otter_letter
 
 
@@ -153,11 +156,6 @@ def get_today_letter(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """
-    호환용 엔드포인트.
-    현재 정책상 자정에 전날 편지가 생성되므로,
-    '오늘의 편지' 대신 가장 최근 편지를 반환합니다.
-    """
     letter = (
         db.query(OtterLetter)
         .filter(OtterLetter.user_id == user.id)
@@ -205,4 +203,25 @@ def mark_letter_as_read(
         db.commit()
         db.refresh(letter)
 
+    return letter
+
+
+@router.patch("/{letter_id}/favorite", response_model=OtterLetterResponse)
+def update_letter_favorite(
+    letter_id: int,
+    payload: OtterLetterFavoriteUpdateRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    letter = (
+        db.query(OtterLetter)
+        .filter(OtterLetter.id == letter_id, OtterLetter.user_id == user.id)
+        .first()
+    )
+    if not letter:
+        raise HTTPException(status_code=404, detail="편지를 찾을 수 없습니다")
+
+    letter.is_favorite = payload.is_favorite
+    db.commit()
+    db.refresh(letter)
     return letter

@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     )
     LLM_MODEL: str = "dori-text-v6"
     QUESTION_LLM_MODEL: str = "dori-diary-question"
+    SUMMARY_LLM_MODEL: str = "dori-summary"
     FORTUNE_LLM_MODEL: str = "saju-v0"
     SAJU_LLM_MODEL: str = "saju-reading-v0"
     LLM_PROVIDER: str = "auto"

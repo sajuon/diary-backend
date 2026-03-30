@@ -19,6 +19,7 @@ class DiaryEntryResponse(BaseModel):
     content: str
     weather: Optional[str] = None
     mood_tags: Optional[List[str]] = None
+    summary_tag: Optional[str] = None
 
     created_at: datetime
     updated_at: datetime
