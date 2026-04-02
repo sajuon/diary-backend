@@ -1,15 +1,18 @@
-from datetime import datetime
-from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+# /home/dori/diary-backend/app/api/auth.py
+from datetime import datetime, timezone
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.deps import get_db, get_current_user
 from app.core.security import (
     hash_password,
     verify_password,
     create_access_token,
+    create_refresh_token,
     decode_access_token,
+    decode_refresh_token,
     oauth2_scheme,
 )
 from app.crud import user as crud_user
@@ -21,15 +24,71 @@ from app.schemas.auth import (
     ProfileUpdateRequest,
     OAuthLoginRequest,
 )
-from app.services.oauth import get_user_info, OAuthError
+from app.services.oauth import OAuthError, get_user_info_from_code
 
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
 
 
+def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
+    response.set_cookie(
+        key=settings.REFRESH_COOKIE_NAME,
+        value=refresh_token,
+        httponly=True,
+        secure=settings.REFRESH_COOKIE_SECURE,
+        samesite=settings.REFRESH_COOKIE_SAMESITE,
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+        path="/",
+        domain=settings.REFRESH_COOKIE_DOMAIN,
+    )
+
+
+def _clear_refresh_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=settings.REFRESH_COOKIE_NAME,
+        httponly=True,
+        secure=settings.REFRESH_COOKIE_SECURE,
+        samesite=settings.REFRESH_COOKIE_SAMESITE,
+        path="/",
+        domain=settings.REFRESH_COOKIE_DOMAIN,
+    )
+
+
+def _blacklist_token(
+    db: Session,
+    user_id: int,
+    token_jti: str,
+    token_type: str,
+    expires_at,
+    reason: str,
+) -> None:
+    exists = (
+        db.query(AuthToken)
+        .filter(AuthToken.token_jti == token_jti)
+        .first()
+    )
+    if exists:
+        return
+
+    row = AuthToken(
+        user_id=user_id,
+        token_jti=token_jti,
+        token_type=token_type,
+        expires_at=expires_at,
+        revoked_at=datetime.now(timezone.utc),
+        reason=reason,
+    )
+    db.add(row)
+    db.commit()
+
+
+def _is_blacklisted(db: Session, token_jti: str) -> bool:
+    q = db.query(AuthToken).filter(AuthToken.token_jti == token_jti)
+    return db.query(q.exists()).scalar()
+
+
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def register(data: RegisterRequest, db: Session = Depends(get_db)):
-    # 이메일은 선택 항목이 되었습니다. 전달된 경우 중복 체크 수행
     if data.email:
         existing = crud_user.get_user_by_email(db, data.email)
         if existing:
@@ -48,29 +107,39 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
 
 @router.post("/login")
 def login(
+    response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db),
 ):
-    # legacy email / password login
     user = crud_user.get_user_by_email(db, form_data.username)
     if not user or not verify_password(form_data.password, user.password or ""):
         raise HTTPException(status_code=400, detail="이메일 또는 비밀번호 오류")
 
-    token = create_access_token({"user_id": user.id})
-    return {"access_token": token, "token_type": "bearer"}
+    access_token = create_access_token({"user_id": user.id})
+    refresh_token = create_refresh_token({"user_id": user.id})
 
+    _set_refresh_cookie(response, refresh_token)
 
-from app.services.oauth import get_user_info, OAuthError, get_user_info_from_code
+    return {"access_token": access_token, "token_type": "bearer"}
 
 
 @router.post("/oauth/exchange")
 async def oauth_exchange(
-    data: OAuthLoginRequest, db: Session = Depends(get_db)
+    data: OAuthLoginRequest,
+    response: Response,
+    db: Session = Depends(get_db),
 ):
     try:
-        info = await get_user_info_from_code(data.provider, data.code, data.redirect_uri)
+        info = await get_user_info_from_code(
+            data.provider,
+            data.code,
+            data.redirect_uri,
+        )
     except OAuthError:
-        raise HTTPException(status_code=401, detail="소셜 로그인 토큰이 유효하지 않습니다")
+        raise HTTPException(
+            status_code=401,
+            detail="소셜 로그인 토큰이 유효하지 않습니다",
+        )
 
     provider = data.provider
     provider_id = info.get("id")
@@ -87,12 +156,114 @@ async def oauth_exchange(
             provider=provider,
             provider_id=provider_id,
         )
-    token = create_access_token({"user_id": user.id})
-    return {"access_token": token, "token_type": "bearer"}
+
+    access_token = create_access_token({"user_id": user.id})
+    refresh_token = create_refresh_token({"user_id": user.id})
+
+    _set_refresh_cookie(response, refresh_token)
+
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
+@router.post("/refresh")
+def refresh_access_token(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    refresh_token = request.cookies.get(settings.REFRESH_COOKIE_NAME)
+    if not refresh_token:
+        raise HTTPException(status_code=401, detail="리프레시 토큰이 없습니다")
+
+    payload = decode_refresh_token(refresh_token)
+    if payload is None:
+        raise HTTPException(status_code=401, detail="유효하지 않은 리프레시 토큰입니다")
+
+    exp = payload.get("exp")
+    if exp is None:
+        raise HTTPException(status_code=401, detail="유효하지 않은 리프레시 토큰입니다")
+
+    now_ts = datetime.now(timezone.utc).timestamp()
+    if float(exp) < float(now_ts):
+        raise HTTPException(status_code=401, detail="리프레시 토큰이 만료되었습니다")
+
+    jti = payload.get("jti")
+    if not jti:
+        raise HTTPException(status_code=401, detail="유효하지 않은 리프레시 토큰입니다")
+
+    if _is_blacklisted(db, jti):
+        raise HTTPException(status_code=401, detail="로그아웃된 리프레시 토큰입니다")
+
+    user_id = payload.get("user_id")
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="유효하지 않은 리프레시 토큰입니다")
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="사용자를 찾을 수 없습니다")
+
+    _blacklist_token(
+        db=db,
+        user_id=user.id,
+        token_jti=jti,
+        token_type="refresh",
+        expires_at=datetime.fromtimestamp(float(exp), tz=timezone.utc),
+        reason="refresh_rotated",
+    )
+
+    new_access_token = create_access_token({"user_id": user.id})
+    new_refresh_token = create_refresh_token({"user_id": user.id})
+
+    _set_refresh_cookie(response, new_refresh_token)
+
+    return {"access_token": new_access_token, "token_type": "bearer"}
+
+
+@router.post("/logout")
+def logout(
+    request: Request,
+    response: Response,
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
+):
+    access_payload = decode_access_token(token)
+    if access_payload:
+        access_jti = access_payload.get("jti")
+        access_exp = access_payload.get("exp")
+        user_id = access_payload.get("user_id")
+        if access_jti and access_exp and user_id:
+            _blacklist_token(
+                db=db,
+                user_id=int(user_id),
+                token_jti=access_jti,
+                token_type="access",
+                expires_at=datetime.fromtimestamp(float(access_exp), tz=timezone.utc),
+                reason="logout",
+            )
+
+    refresh_token = request.cookies.get(settings.REFRESH_COOKIE_NAME)
+    if refresh_token:
+        refresh_payload = decode_refresh_token(refresh_token)
+        if refresh_payload:
+            refresh_jti = refresh_payload.get("jti")
+            refresh_exp = refresh_payload.get("exp")
+            user_id = refresh_payload.get("user_id")
+            if refresh_jti and refresh_exp and user_id:
+                _blacklist_token(
+                    db=db,
+                    user_id=int(user_id),
+                    token_jti=refresh_jti,
+                    token_type="refresh",
+                    expires_at=datetime.fromtimestamp(float(refresh_exp), tz=timezone.utc),
+                    reason="logout",
+                )
+
+    _clear_refresh_cookie(response)
+    return {"message": "로그아웃되었습니다"}
 
 
 @router.get("/me", response_model=UserResponse)
-def get_current_user(user: User = Depends(get_current_user)):
+def get_current_user_info(user: User = Depends(get_current_user)):
     return user
 
 
@@ -103,6 +274,9 @@ def update_profile(
     db: Session = Depends(get_db),
 ):
     updated = crud_user.update_user_profile(
-        db, user, nickname=data.nickname, profile_image=data.profile_image
+        db,
+        user,
+        nickname=data.nickname,
+        profile_image=data.profile_image,
     )
     return updated

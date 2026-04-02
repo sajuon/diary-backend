@@ -1,3 +1,4 @@
+# /home/dori/diary-backend/app/core/config.py
 from pathlib import Path
 from typing import Optional
 
@@ -25,6 +26,13 @@ class Settings(BaseSettings):
     SECRET_KEY: str = Field(..., min_length=8)
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+
+    # refresh token 설정
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
+    REFRESH_COOKIE_NAME: str = "haedori_refresh_token"
+    REFRESH_COOKIE_SECURE: bool = False
+    REFRESH_COOKIE_SAMESITE: str = "lax"
+    REFRESH_COOKIE_DOMAIN: Optional[str] = None
 
     KAKAO_CLIENT_ID: Optional[str] = None
     KAKAO_CLIENT_SECRET: Optional[str] = None

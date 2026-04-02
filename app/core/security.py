@@ -1,3 +1,4 @@
+# /home/dori/diary-backend/app/core/security.py
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, Dict
 import uuid
@@ -11,7 +12,6 @@ from app.core.config import settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# bearer 토큰 추출용
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 
@@ -23,29 +23,86 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 
 
-def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
-    """
-    data 예: {"user_id": 1}
-    """
+def _create_token(
+    data: Dict[str, Any],
+    token_type: str,
+    expires_delta: timedelta,
+) -> str:
     to_encode = data.copy()
 
     now = datetime.now(timezone.utc)
-    expire = now + (expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
+    expire = now + expires_delta
 
-    # jti(토큰 고유 식별자) 넣어두면 블랙리스트 관리가 안정적임
-    to_encode.update({
-        "exp": expire,
-        "iat": now,
-        "jti": str(uuid.uuid4()),
-    })
+    to_encode.update(
+        {
+            "exp": expire,
+            "iat": now,
+            "jti": str(uuid.uuid4()),
+            "type": token_type,
+        }
+    )
 
-    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    encoded_jwt = jwt.encode(
+        to_encode,
+        settings.SECRET_KEY,
+        algorithm=settings.ALGORITHM,
+    )
     return encoded_jwt
 
 
-def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
+def create_access_token(
+    data: Dict[str, Any],
+    expires_delta: Optional[timedelta] = None,
+) -> str:
+    return _create_token(
+        data=data,
+        token_type="access",
+        expires_delta=expires_delta
+        or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
+    )
+
+
+def create_refresh_token(
+    data: Dict[str, Any],
+    expires_delta: Optional[timedelta] = None,
+) -> str:
+    return _create_token(
+        data=data,
+        token_type="refresh",
+        expires_delta=expires_delta
+        or timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+    )
+
+
+def decode_token(token: str) -> Optional[Dict[str, Any]]:
     try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        payload = jwt.decode(
+            token,
+            settings.SECRET_KEY,
+            algorithms=[settings.ALGORITHM],
+        )
         return payload
     except JWTError:
         return None
+
+
+def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
+    payload = decode_token(token)
+    if not payload:
+        return None
+
+    if payload.get("type") != "access":
+        return None
+
+    return payload
+
+
+def decode_refresh_token(token: str) -> Optional[Dict[str, Any]]:
+    payload = decode_token(token)
+    if not payload:
+        return None
+
+    if payload.get("type") != "refresh":
+        return None
+
+    return payload

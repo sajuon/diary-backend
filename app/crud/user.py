@@ -1,7 +1,9 @@
+# /home/dori/diary-backend/app/crud/user.py
 from sqlalchemy.orm import Session
 from typing import Optional
 
 from app.models.user import User
+from app.models.profile import UserBirthProfile
 
 
 def get_user_by_id(db: Session, user_id: int) -> Optional[User]:
@@ -38,6 +40,27 @@ def create_user(
     )
     db.add(user)
     db.commit()
+    db.refresh(user)
+
+    # 회원 생성 직후 birth profile 기본 레코드 생성
+    existing_birth_profile = (
+        db.query(UserBirthProfile)
+        .filter(UserBirthProfile.user_id == user.id)
+        .first()
+    )
+
+    if not existing_birth_profile:
+        birth_profile = UserBirthProfile(
+            user_id=user.id,
+            birth_date=None,
+            birth_time=None,
+            birth_place=None,
+            sex=None,
+            timezone="Asia/Seoul",
+        )
+        db.add(birth_profile)
+        db.commit()
+
     db.refresh(user)
     return user
 
