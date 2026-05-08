@@ -1,7 +1,17 @@
+# app/services/saju_engine.py
+# 역할:
+# - 기존 코드에서 analyze_daily_element_flow를 import하는 곳이 있을 수 있어서 남겨두는 호환용 파일이다.
+# - 더 이상 날짜 % 5 더미 로직을 사용하지 않는다.
+# - 신규 사주 상세 해석은 saju_focus_engine.py의 build_saju_focus_points를 사용한다.
+
+from __future__ import annotations
+
 from datetime import date
 from typing import Dict, Optional
 
 from app.models.profile import UserBirthProfile
+from app.services.saju_chart_engine import build_saju_chart
+from app.services.saju_focus_engine import build_saju_focus_points
 
 
 def analyze_daily_element_flow(
@@ -9,30 +19,24 @@ def analyze_daily_element_flow(
     target_date: date,
 ) -> Dict[str, str]:
     """
-    사주를 '설명'하지 않고
-    오늘의 흐름/리듬 힌트만 반환하는 용도
+    legacy 호환용 함수.
+    신규 상세 사주 해석에서는 직접 사용하지 않는 것을 권장한다.
     """
 
     if profile is None or profile.birth_date is None:
         return {
             "dominant": "unknown",
-            "message": "오늘은 흐름을 가볍게 느껴보는 게 좋아요."
+            "message": "오늘은 큰 흐름 중심으로 참고해 주세요.",
         }
 
-    # ⚠️ 지금은 날짜 기반 더미 로직
-    day = target_date.day % 5
+    chart_payload = build_saju_chart(profile)
+    focus_points = build_saju_focus_points(chart_payload, target_date)
 
-    element_map = {
-        0: ("wood", "오늘은 시작과 시도가 잘 어울리는 날이에요."),
-        1: ("fire", "감정이 쉽게 올라오는 하루일 수 있어요."),
-        2: ("earth", "속도를 줄이고 균형을 잡기 좋은 날이에요."),
-        3: ("metal", "생각이 많아질 수 있는 날이에요."),
-        4: ("water", "감정과 생각이 깊어지기 쉬운 날이에요."),
-    }
-
-    dominant, msg = element_map[day]
+    relation = focus_points.get("relation") or {}
 
     return {
-        "dominant": dominant,
-        "message": msg,
+        "dominant": str(focus_points.get("today_element") or "unknown"),
+        "message": str(focus_points.get("summary") or ""),
+        "theme": str(relation.get("theme") or ""),
+        "relation_label": str(relation.get("label") or ""),
     }

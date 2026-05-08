@@ -1,3 +1,9 @@
+# app/services/saju_analysis_service.py
+# 역할:
+# - 사주 원국과 focus_points를 payload로 구성해 LLM에 전달한다.
+# - LLM은 사주 계산을 직접 하지 않고, 백엔드에서 계산한 focus_points를 바탕으로 문장만 생성한다.
+# - 첫 줄 안내문과 사주 원국 문장은 백엔드에서 고정으로 붙인다.
+
 from __future__ import annotations
 
 import json
@@ -12,22 +18,26 @@ from app.llm.payloads import build_base_payload
 from app.models.profile import UserBirthProfile
 from app.models.user import User
 from app.services.letter_llm_service import LetterLLMError, request_letter_llm
-from app.services.saju_engine import analyze_daily_element_flow
+from app.services.saju_chart_engine import build_saju_chart
+from app.services.saju_focus_engine import build_saju_focus_points
 
 logger = logging.getLogger(__name__)
 
 KST = ZoneInfo("Asia/Seoul")
+DISCLAIMER_LINE = "이 내용은 오락·참고용 해석입니다."
 
 
 def _format_birth_date(profile: Optional[UserBirthProfile]) -> str:
     if not profile or not profile.birth_date:
         return "unknown"
+
     return profile.birth_date.isoformat()
 
 
 def _format_birth_time(profile: Optional[UserBirthProfile]) -> str:
     if not profile or not profile.birth_time:
         return "unknown"
+
     return profile.birth_time.strftime("%H:%M")
 
 
@@ -55,13 +65,85 @@ def _weekday_ko(target_date: date) -> str:
 
 def _season_hint(target_date: date) -> str:
     month = target_date.month
+
     if month in (3, 4, 5):
         return "spring"
     if month in (6, 7, 8):
         return "summer"
     if month in (9, 10, 11):
         return "autumn"
+
     return "winter"
+
+
+def _get_pillar_ganji(chart_payload: Dict[str, Any], label: str) -> str:
+    pillars = chart_payload.get("pillars") or []
+
+    for pillar in pillars:
+        if pillar.get("label") == label:
+            ganji = pillar.get("ganji")
+            stem = pillar.get("stem")
+            branch = pillar.get("branch")
+
+            if isinstance(ganji, str) and ganji.strip():
+                return ganji.strip()
+
+            if isinstance(stem, str) and isinstance(branch, str):
+                return f"{stem}{branch}"
+
+    return ""
+
+
+def _build_origin_sentence(user: User, chart_payload: Dict[str, Any]) -> str:
+    name = getattr(user, "nickname", None) or "해도리 친구"
+
+    year = _get_pillar_ganji(chart_payload, "year")
+    month = _get_pillar_ganji(chart_payload, "month")
+    day = _get_pillar_ganji(chart_payload, "day")
+    hour = _get_pillar_ganji(chart_payload, "hour")
+
+    if year and month and day and hour:
+        return f"{name}님은 {year}년 {month}월 {day}일 {hour}시입니다."
+
+    if year and month and day:
+        return f"{name}님은 {year}년 {month}월 {day}일입니다."
+
+    return f"{name}님의 사주 원국을 기준으로 해석합니다."
+
+
+def _remove_existing_header_lines(text: str) -> str:
+    cleaned = text.strip()
+
+    cleaned = re.sub(
+        r"^\s*이\s*내용은\s*오락[·ㆍ\-]?\s*참고용\s*해석입니다\.?\s*",
+        "",
+        cleaned,
+        flags=re.MULTILINE,
+    )
+
+    cleaned = re.sub(
+        r"^\s*.+?님은\s*[가-힣A-Za-z0-9]+\s*년\s*[가-힣A-Za-z0-9]+\s*월\s*[가-힣A-Za-z0-9]+\s*일(?:\s*[가-힣A-Za-z0-9]+\s*시)?입니다\.?\s*",
+        "",
+        cleaned,
+        flags=re.MULTILINE,
+    )
+
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+def _attach_fixed_header(
+    user: User,
+    chart_payload: Dict[str, Any],
+    analysis_text: str,
+) -> str:
+    origin_line = _build_origin_sentence(user, chart_payload)
+    body = _remove_existing_header_lines(analysis_text)
+
+    if body:
+        return f"{DISCLAIMER_LINE}\n{origin_line}\n{body}"
+
+    return f"{DISCLAIMER_LINE}\n{origin_line}"
 
 
 def _build_saju_payload(
@@ -69,31 +151,46 @@ def _build_saju_payload(
     profile: Optional[UserBirthProfile],
     analysis_date: date,
 ) -> Dict[str, Any]:
-    flow = analyze_daily_element_flow(profile, analysis_date)
+    chart_payload = build_saju_chart(profile)
+    focus_points = build_saju_focus_points(chart_payload, analysis_date)
 
     payload = build_base_payload(
         mode="saju_daily_analysis",
         user=user,
         birth_profile=_profile_payload(profile),
-        chart=None,
+        chart=chart_payload,
         question=(
-            f"{analysis_date.isoformat()} 기준으로 오늘과 가까운 시기의 흐름을 중심으로 "
-            "성향, 일/학업, 금전, 관계, 컨디션을 자세히 풀어줘."
+            f"{analysis_date.isoformat()} 기준 사주 상세 해석 본문을 작성해. "
+            "첫 줄의 오락·참고용 문구와 사주 원국 문장은 백엔드에서 별도로 붙일 예정이므로 답변 본문에서는 반복하지 마. "
+            "반드시 saju_focus_points만 근거로 사용하고, 일반 운세 문장이나 임의의 흐름을 추가하지 마. "
+            "saju_focus_points의 relation.label, relation.theme, today_pillar, day_master_stem, day_master_element, "
+            "today_element, dominant_element, weak_element, balance_message, core_reason, category_guides를 반드시 반영해. "
+            "세 번째 문장은 반드시 '{이름}님 기준 {날짜}의 흐름을 보면,' 형태로 시작해. "
+            "전체 흐름 요약에는 반드시 '~하는 편이 좋은 때로 읽힙니다' 형태를 포함해. "
+            "오늘의 핵심 포인트는 relation.theme과 weak_element 보완 방향을 함께 엮어서 이유까지 설명해. "
+            "그 다음 일/공부, 인간관계, 감정 흐름, 연애, 금전, 컨디션 순서로 자연스럽게 이어서 설명해. "
+            "항목명을 붙이지 말고 하나의 문단 흐름으로 작성해. "
+            "마지막에는 바로 실행 가능한 행동 1~2개를 제안해. "
+            "category_guides의 문장을 그대로 복사하지 말고 의미만 유지해 새 문장으로 바꿔. "
+            "차트 세부 내용이 부족하다거나 입력 정보가 부족하다는 표현은 사용하지 마."
         ),
         topics=[
-            "오늘의 흐름",
-            "성향",
-            "커리어/학업",
-            "금전운",
-            "연애/대인관계운",
-            "건강/컨디션",
+            "오늘의 핵심 포인트",
+            "일/공부",
+            "인간관계",
+            "감정 흐름",
+            "연애",
+            "금전",
+            "컨디션",
+            "실천 팁",
         ],
-        tone="mystic",
+        tone="soft_counseling",
         length="medium",
-        structure="sections",
+        structure="paragraphs",
     )
 
     payload["user_profile"]["gender"] = str((profile.sex if profile and profile.sex else None) or "unknown")
+
     payload["current_context"] = {
         "as_of_date": analysis_date.isoformat(),
         "timezone": "Asia/Seoul",
@@ -101,53 +198,113 @@ def _build_saju_payload(
         "season": _season_hint(analysis_date),
         "app_surface": "saju_page",
     }
-    payload["daily_flow_hint"] = {
-        "dominant": flow.get("dominant", "unknown"),
-        "message": flow.get("message", ""),
-    }
+
+    payload["saju_focus_points"] = focus_points
+
     payload["input_quality"] = {
         "birth_date_provided": bool(profile and profile.birth_date),
         "birth_time_provided": bool(profile and profile.birth_time),
         "birth_place_provided": bool(profile and profile.birth_place),
-        "chart_provided": False,
+        "chart_provided": bool(chart_payload.get("chart_provided")),
     }
+
+    payload["output_rules"] = {
+        "do_not_write_disclaimer_line": True,
+        "do_not_write_origin_sentence": True,
+        "backend_will_attach_fixed_header": True,
+        "use_only_focus_points": True,
+        "category_order": [
+            "오늘의 핵심 포인트",
+            "일/공부",
+            "인간관계",
+            "감정 흐름",
+            "연애",
+            "금전",
+            "컨디션",
+            "실천 팁",
+        ],
+        "style_rules": [
+            "존댓말 사용",
+            "단정 표현 금지",
+            "가능성 중심으로 설명",
+            "운세 느낌보다 하루 행동 가이드 중심",
+            "7~10문장 내외",
+            "2~3문단",
+            "항목명 사용 금지",
+            "키워드만 나열 금지",
+        ],
+        "must_include": [
+            "{name}님 기준 {date}의 흐름을 보면,",
+            "~하는 편이 좋은 때로 읽힙니다",
+            "오늘의 핵심 포인트는",
+        ],
+        "forbidden_phrases": [
+            "입력 정보는 세부 사주 세팅이 제공되었으나",
+            "가능성 중심으로 가볍게 읽을 수 있습니다",
+            "차트 세부 내용이 부족합니다",
+            "추가 정보가 부족합니다",
+            "활력",
+            "새로운 시작",
+            "성장",
+            "에너지",
+            "균형",
+            "휴식",
+            "과부하",
+            "감정이 올라온다",
+            "부드럽게 말을 건넨다",
+            "과소비",
+            "안정",
+            "피로",
+            "수면",
+        ],
+    }
+
     return payload
 
 
 def _clean_analysis_text(text: str) -> str:
     cleaned = text.strip()
+
     fenced = re.search(r"```(?:text|markdown)?\s*(.*?)\s*```", cleaned, re.DOTALL)
     if fenced:
         cleaned = fenced.group(1).strip()
+
     cleaned = cleaned.strip().strip('"').strip("'")
     cleaned = re.sub(r"\r\n?", "\n", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+
     return cleaned
 
 
-def _fallback_analysis(user: User, profile: Optional[UserBirthProfile], analysis_date: date) -> str:
+def _fallback_analysis(
+    user: User,
+    profile: Optional[UserBirthProfile],
+    analysis_date: date,
+    focus_points: Optional[Dict[str, Any]] = None,
+) -> str:
     name = getattr(user, "nickname", None) or "해도리 친구"
-    missing = []
-    if not profile or not profile.birth_date:
-        missing.append("생년월일")
-    if not profile or not profile.birth_time:
-        missing.append("출생시간")
-    if not profile or not profile.birth_place:
-        missing.append("출생지")
+    focus_points = focus_points or {}
 
-    missing_line = ""
-    if missing:
-        missing_line = f"입력 정보는 {', '.join(missing)}가 비어 있어 가능성 중심으로만 가볍게 읽을 수 있습니다.\n\n"
+    relation = focus_points.get("relation") or {}
+    relation_theme = relation.get("theme") or "오늘의 리듬 조절"
+    direction = focus_points.get("summary") or "오늘은 해야 할 일을 작게 나누어 보는 편이 좋은 때로 읽힙니다."
+    core_reason = focus_points.get("core_reason") or "오늘의 흐름은 본인의 상태를 살피며 무리하지 않는 방향이 중요해 보입니다."
+    category_guides = focus_points.get("category_guides") or {}
+
+    work = category_guides.get("work_study") or "일이나 공부에서는 우선순위를 좁히는 쪽이 좋아 보입니다."
+    relationship = category_guides.get("relationship") or "인간관계에서는 상대의 반응을 바로 단정하지 않는 편이 좋습니다."
+    emotion = category_guides.get("emotion") or "감정 흐름은 짧게 기록하며 정리해보는 방식이 좋아 보입니다."
+    love = category_guides.get("love") or "연애나 가까운 관계에서는 편안한 대화의 흐름을 유지하는 쪽이 좋아 보입니다."
+    money = category_guides.get("money") or "금전은 선택 기준을 한 번 더 확인하는 태도가 어울립니다."
+    condition = category_guides.get("condition") or "컨디션은 몸이 보내는 작은 신호를 무시하지 않는 편이 좋겠습니다."
 
     return (
-        "이 내용은 오락·참고용 해석입니다.\n\n"
-        f"{name}님 기준 {analysis_date.isoformat()}의 흐름을 보면, 지금은 큰 결론을 서두르기보다 "
-        "생활 리듬과 감정의 균형을 먼저 다듬는 편이 좋은 때로 읽힙니다.\n\n"
-        f"{missing_line}"
-        "오늘의 포인트는 무리한 확장보다 정리와 점검입니다. 일이나 공부에서는 한 번에 많이 밀어붙이기보다 "
-        "우선순위를 좁히면 흐름이 안정되기 쉽고, 관계에서는 상대의 반응을 바로 단정하지 말고 한 템포 여유를 두는 편이 좋습니다.\n\n"
-        "금전 쪽은 충동 지출이나 즉흥 결정만 조심하면 무난한 흐름에 가깝고, 컨디션은 수면과 피로 누적 신호를 먼저 살피는 쪽이 좋겠습니다.\n\n"
-        "작게 실천할 팁으로는 아침에 오늘 할 일을 세 가지 안으로 줄여 적고, 저녁에는 쌓인 감정을 짧게 메모로 정리해보는 방법이 잘 맞습니다."
+        f"{name}님 기준 {analysis_date.isoformat()}의 흐름을 보면, "
+        f"{direction}\n\n"
+        f"오늘의 핵심 포인트는 {relation_theme}입니다. {core_reason} "
+        f"{work} {relationship} {emotion} {love} {money} {condition}\n\n"
+        "오늘은 가장 먼저 처리할 일 하나를 종이에 적고, 끝낸 뒤에는 남은 일을 다시 세 가지 안으로 줄여보세요. "
+        "대화가 필요한 일이 있다면 바로 보내기보다 한 번 읽어본 뒤 전달하는 편이 좋겠습니다."
     )
 
 
@@ -159,20 +316,25 @@ async def generate_saju_analysis(
 ) -> Dict[str, Any]:
     target_date = analysis_date or datetime.now(KST).date()
     request_object = _build_saju_payload(user, profile, target_date)
+    chart_payload = request_object.get("chart") or {}
+    focus_points = request_object.get("saju_focus_points") or {}
 
     payload = {
         "model": settings.SAJU_LLM_MODEL,
         "messages": [
-            # The saju-v0 OpenWebUI preset already carries the long-form rules.
             {
                 "role": "user",
-                "content": json.dumps(request_object, ensure_ascii=False, separators=(",", ":")),
+                "content": json.dumps(
+                    request_object,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
             },
         ],
-        "temperature": 0.65,
-        "max_tokens": 700,
+        "temperature": 0.45,
+        "max_tokens": 900,
         "_request_options": {
-            "timeout_sec": 25,
+            "timeout_sec": 90,
             "strategy_allowlist": [
                 "openwebui-openai",
                 "explicit-openwebui-openai",
@@ -182,19 +344,25 @@ async def generate_saju_analysis(
 
     try:
         logger.info(
-            "[SAJU_ANALYSIS] requesting LLM. user_id=%s date=%s model=%s",
+            "[SAJU_ANALYSIS] requesting LLM. user_id=%s date=%s model=%s chart_provided=%s",
             getattr(user, "id", None),
             target_date,
             settings.SAJU_LLM_MODEL,
+            bool(chart_payload.get("chart_provided")),
         )
+
         llm_resp = await request_letter_llm(payload)
         content = llm_resp.get("content")
+
         if not isinstance(content, str) or not content.strip():
             raise LetterLLMError("Saju LLM 응답에 content 없음")
 
         cleaned = _clean_analysis_text(content)
+
         if not cleaned:
             raise LetterLLMError("Saju LLM 응답 정리 후 빈 문자열")
+
+        final_analysis = _attach_fixed_header(user, chart_payload, cleaned)
 
         logger.info(
             "[SAJU_ANALYSIS] LLM success. user_id=%s date=%s model=%s",
@@ -202,14 +370,17 @@ async def generate_saju_analysis(
             target_date,
             llm_resp.get("model") or settings.SAJU_LLM_MODEL,
         )
+
         return {
-            "analysis": cleaned,
+            "analysis": final_analysis,
             "analysis_date": target_date.isoformat(),
             "model": llm_resp.get("model") or settings.SAJU_LLM_MODEL,
-            "chart_provided": False,
-            "pillars": [],
-            "elementSummary": {},
+            "chart_provided": bool(chart_payload.get("chart_provided")),
+            "pillars": chart_payload.get("pillars", []),
+            "elementSummary": chart_payload.get("elementSummary", {}),
+            "saju_focus_points": focus_points,
         }
+
     except LetterLLMError as exc:
         logger.warning(
             "[SAJU_ANALYSIS] fallback triggered. user_id=%s date=%s reason=%s",
@@ -217,11 +388,21 @@ async def generate_saju_analysis(
             target_date,
             str(exc),
         )
+
+        fallback_text = _fallback_analysis(
+            user=user,
+            profile=profile,
+            analysis_date=target_date,
+            focus_points=focus_points,
+        )
+        final_analysis = _attach_fixed_header(user, chart_payload, fallback_text)
+
         return {
-            "analysis": _fallback_analysis(user, profile, target_date),
+            "analysis": final_analysis,
             "analysis_date": target_date.isoformat(),
             "model": "rule-based-saju-fallback",
-            "chart_provided": False,
-            "pillars": [],
-            "elementSummary": {},
+            "chart_provided": bool(chart_payload.get("chart_provided")),
+            "pillars": chart_payload.get("pillars", []),
+            "elementSummary": chart_payload.get("elementSummary", {}),
+            "saju_focus_points": focus_points,
         }

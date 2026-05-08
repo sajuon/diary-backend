@@ -1,4 +1,4 @@
-#letter_llm_service.py
+# /home/dori/diary-backend/app/services/letter_llm_service.py
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -52,43 +52,47 @@ _debug_log()
 
 
 def _normalize_url(url: str) -> str:
-    return url.strip().rstrip("/")
+    return str(url or "").strip().rstrip("/")
 
 
 def _dedupe(items: Iterable[str]) -> list[str]:
     result: list[str] = []
     seen: set[str] = set()
+
     for item in items:
-        if not item or item in seen:
+        normalized = _normalize_url(item)
+        if not normalized or normalized in seen:
             continue
-        seen.add(item)
-        result.append(item)
+
+        seen.add(normalized)
+        result.append(normalized)
+
     return result
 
 
 def _configured_base_urls() -> list[str]:
-    urls = [_normalize_url(settings.LLM_BASE_URL)]
+    """
+    LLM 요청 주소 후보를 만든다.
+
+    중요:
+    - 기본 local/ollama 후보를 자동으로 넣지 않는다.
+    - .env의 LLM_BASE_URL을 최우선이자 기본값으로 사용한다.
+    - 추가 후보가 필요할 때만 LLM_FALLBACK_BASE_URLS에 직접 적는다.
+
+    예:
+    LLM_BASE_URL=http://172.30.1.77:8080
+    LLM_FALLBACK_BASE_URLS=http://127.0.0.1:8080,http://localhost:8080
+    """
+    urls: list[str] = []
+
+    primary = _normalize_url(getattr(settings, "LLM_BASE_URL", ""))
+    if primary:
+        urls.append(primary)
 
     extra = getattr(settings, "LLM_FALLBACK_BASE_URLS", "") or ""
     if extra:
         urls.extend(_normalize_url(item) for item in extra.split(",") if item.strip())
 
-    # Common local/container defaults. These are tried only if the configured URL fails.
-    urls.extend(
-        [
-            "http://open-webui:8080",
-            "http://host.docker.internal:3000",
-            "http://localhost:3000",
-            "http://127.0.0.1:3000",
-            "http://host.docker.internal:8080",
-            "http://localhost:8080",
-            "http://127.0.0.1:8080",
-            "http://ollama:11434",
-            "http://host.docker.internal:11434",
-            "http://localhost:11434",
-            "http://127.0.0.1:11434",
-        ]
-    )
     return _dedupe(urls)
 
 
@@ -143,8 +147,10 @@ def _strategies_for_root(root: str) -> list[EndpointStrategy]:
 
     if provider == "openwebui":
         return openwebui_strategies + ollama_strategies
+
     if provider == "ollama":
         return ollama_strategies + openwebui_strategies
+
     return [
         openwebui_strategies[0],
         openwebui_strategies[1],
@@ -156,19 +162,51 @@ def _strategies_for_root(root: str) -> list[EndpointStrategy]:
 
 def _strategy_from_explicit_url(url: str) -> Optional[EndpointStrategy]:
     known_suffixes = [
-        ("/api/chat/completions", "openai_chat", True, "explicit-openwebui-openai", ("/api/models", "/ollama/api/tags", "/api/tags")),
-        ("/ollama/api/chat", "ollama_chat", True, "explicit-openwebui-ollama-chat", ("/ollama/api/tags", "/api/models", "/api/tags")),
-        ("/ollama/api/generate", "ollama_generate", True, "explicit-openwebui-ollama-generate", ("/ollama/api/tags", "/api/models", "/api/tags")),
-        ("/api/chat", "ollama_chat", False, "explicit-ollama-chat", ("/api/tags",)),
-        ("/api/generate", "ollama_generate", False, "explicit-ollama-generate", ("/api/tags",)),
+        (
+            "/api/chat/completions",
+            "openai_chat",
+            True,
+            "explicit-openwebui-openai",
+            ("/api/models", "/ollama/api/tags", "/api/tags"),
+        ),
+        (
+            "/ollama/api/chat",
+            "ollama_chat",
+            True,
+            "explicit-openwebui-ollama-chat",
+            ("/ollama/api/tags", "/api/models", "/api/tags"),
+        ),
+        (
+            "/ollama/api/generate",
+            "ollama_generate",
+            True,
+            "explicit-openwebui-ollama-generate",
+            ("/ollama/api/tags", "/api/models", "/api/tags"),
+        ),
+        (
+            "/api/chat",
+            "ollama_chat",
+            False,
+            "explicit-ollama-chat",
+            ("/api/tags",),
+        ),
+        (
+            "/api/generate",
+            "ollama_generate",
+            False,
+            "explicit-ollama-generate",
+            ("/api/tags",),
+        ),
     ]
 
+    normalized = _normalize_url(url)
+
     for suffix, kind, use_auth, name, model_paths in known_suffixes:
-        if url.endswith(suffix):
-            root = url[: -len(suffix)].rstrip("/")
+        if normalized.endswith(suffix):
+            root = normalized[: -len(suffix)].rstrip("/")
             return EndpointStrategy(
                 name=name,
-                url=url,
+                url=normalized,
                 root=root,
                 request_kind=kind,
                 use_auth=use_auth,
@@ -178,46 +216,63 @@ def _strategy_from_explicit_url(url: str) -> Optional[EndpointStrategy]:
     return None
 
 
+def _is_strategy_allowed_for_current_base(strategy: EndpointStrategy) -> bool:
+    configured_roots = set(_configured_base_urls())
+
+    if strategy.root in configured_roots:
+        return True
+
+    return any(strategy.url.startswith(root + "/") for root in configured_roots)
+
+
 def _candidate_strategies() -> list[EndpointStrategy]:
     strategies: list[EndpointStrategy] = []
-
-    if _cached_strategy is not None:
-        strategies.append(_cached_strategy)
 
     for configured in _configured_base_urls():
         explicit = _strategy_from_explicit_url(configured)
         if explicit is not None:
             strategies.append(explicit)
             continue
+
         strategies.extend(_strategies_for_root(configured))
+
+    if _cached_strategy is not None and _is_strategy_allowed_for_current_base(_cached_strategy):
+        strategies.insert(0, _cached_strategy)
 
     deduped: list[EndpointStrategy] = []
     seen: set[tuple[str, str]] = set()
+
     for strategy in strategies:
         key = (strategy.request_kind, strategy.url)
         if key in seen:
             continue
+
         seen.add(key)
         deduped.append(strategy)
+
     return deduped
 
 
 def _headers(use_auth: bool) -> dict[str, str]:
     headers = {"Content-Type": "application/json"}
     api_key = (getattr(settings, "LLM_API_KEY", None) or "").strip()
+
     if use_auth and api_key:
         headers["Authorization"] = f"Bearer {api_key}"
+
     return headers
 
 
 def _timeout(total_override: Optional[float] = None) -> httpx.Timeout:
     configured = total_override
+
     if configured is None:
         configured = getattr(settings, "LLM_TIMEOUT_SEC", 60)
 
     total = max(5.0, float(configured))
     connect_timeout = min(3.0, float(total))
     write_timeout = min(10.0, float(total))
+
     return httpx.Timeout(
         total,
         connect=connect_timeout,
@@ -230,24 +285,31 @@ def _timeout(total_override: Optional[float] = None) -> httpx.Timeout:
 def _extract_text_content(content: Any) -> str:
     if isinstance(content, str):
         return content
+
     if isinstance(content, list):
         parts: list[str] = []
+
         for item in content:
             if isinstance(item, dict):
                 text = item.get("text")
                 if isinstance(text, str) and text:
                     parts.append(text)
+
         return "\n".join(parts)
+
     return ""
 
 
 def _messages_to_prompt(messages: list[dict[str, Any]]) -> str:
     lines: list[str] = []
+
     for message in messages:
         role = str(message.get("role", "user")).upper()
         content = _extract_text_content(message.get("content"))
+
         if content:
             lines.append(f"{role}:\n{content}")
+
     lines.append("ASSISTANT:\n")
     return "\n\n".join(lines)
 
@@ -263,8 +325,10 @@ def _prepare_request_payload(
         return request_payload
 
     options: dict[str, Any] = {}
+
     if original_payload.get("temperature") is not None:
         options["temperature"] = original_payload["temperature"]
+
     if original_payload.get("max_tokens") is not None:
         options["num_predict"] = original_payload["max_tokens"]
 
@@ -276,8 +340,10 @@ def _prepare_request_payload(
             "messages": messages,
             "stream": False,
         }
+
         if options:
             request_payload["options"] = options
+
         return request_payload
 
     request_payload = {
@@ -285,8 +351,10 @@ def _prepare_request_payload(
         "prompt": _messages_to_prompt(messages),
         "stream": False,
     }
+
     if options:
         request_payload["options"] = options
+
     return request_payload
 
 
@@ -297,20 +365,23 @@ def _parse_response_payload(
 ) -> tuple[str, str]:
     if strategy.request_kind == "openai_chat":
         content = payload["choices"][0]["message"]["content"]
+
         if not isinstance(content, str) or not content.strip():
             raise LetterLLMError("LLM 응답 content가 비어있습니다.")
-        # OpenWebUI presets often return the underlying base model ID in the
-        # response even when we intentionally requested a named preset.
+
         return content, str(fallback_model or payload.get("model") or "")
 
     if strategy.request_kind == "ollama_chat":
         message = payload.get("message")
+
         if isinstance(message, dict):
             content = message.get("content")
+
             if isinstance(content, str) and content.strip():
                 return content, str(payload.get("model") or fallback_model)
 
     content = payload.get("response")
+
     if isinstance(content, str) and content.strip():
         return content, str(payload.get("model") or fallback_model)
 
@@ -319,6 +390,7 @@ def _parse_response_payload(
 
 def _extract_model_ids(payload: Any) -> list[str]:
     rows: list[Any] = []
+
     if isinstance(payload, dict):
         if isinstance(payload.get("data"), list):
             rows = payload["data"]
@@ -330,14 +402,18 @@ def _extract_model_ids(payload: Any) -> list[str]:
         rows = payload
 
     models: list[str] = []
+
     for row in rows:
         if isinstance(row, str) and row.strip():
             models.append(row.strip())
             continue
+
         if not isinstance(row, dict):
             continue
+
         for key in ("id", "model", "name"):
             value = row.get(key)
+
             if isinstance(value, str) and value.strip():
                 models.append(value.strip())
                 break
@@ -351,6 +427,7 @@ async def _fetch_models(
 ) -> list[str]:
     for model_path in strategy.model_paths:
         model_url = f"{strategy.root}{model_path}" if strategy.root else model_path
+
         try:
             response = await client.get(model_url, headers=_headers(strategy.use_auth))
         except httpx.RequestError:
@@ -365,6 +442,7 @@ async def _fetch_models(
             continue
 
         models = _extract_model_ids(payload)
+
         if models:
             return models
 
@@ -376,11 +454,13 @@ def _resolve_model_name(requested_model: str, available_models: list[str]) -> st
         return requested_model
 
     requested = (requested_model or "").strip()
+
     if not requested:
         return available_models[0]
 
     requested_lower = requested.lower()
     exact = {model.lower(): model for model in available_models}
+
     if requested_lower in exact:
         return exact[requested_lower]
 
@@ -389,6 +469,7 @@ def _resolve_model_name(requested_model: str, available_models: list[str]) -> st
 
     for model in available_models:
         candidate = model.lower()
+
         if candidate.endswith(requested_lower) or requested_lower in candidate:
             return model
 
@@ -396,6 +477,7 @@ def _resolve_model_name(requested_model: str, available_models: list[str]) -> st
         candidate = model.lower()
         candidate_base = candidate.split(":", 1)[0]
         candidate_tail = candidate.rsplit("/", 1)[-1]
+
         if candidate_base == requested_base or candidate_tail == requested_tail:
             return model
 
@@ -404,10 +486,13 @@ def _resolve_model_name(requested_model: str, available_models: list[str]) -> st
 
 def _looks_like_model_not_found(status_code: int, body: str) -> bool:
     text = body.lower()
+
     if status_code not in (400, 404):
         return False
+
     if "model" not in text:
         return False
+
     return any(
         phrase in text
         for phrase in (
@@ -422,36 +507,20 @@ def _looks_like_model_not_found(status_code: int, body: str) -> bool:
 
 async def request_letter_llm(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Open WebUI (OpenAI-compatible) endpoint:
+    OpenWebUI/OpenAI-compatible endpoint:
       POST {LLM_BASE_URL}/api/chat/completions
-
-    payload example:
-    {
-      "model": "dori-text-v6",
-      "messages": [
-        {"role": "system", "content": "..."},
-        {"role": "user", "content": "..."}
-      ],
-      "temperature": 0.7,
-      "max_tokens": 550
-    }
-
-    return:
-    {
-      "content": "...",
-      "model": "...",
-      "raw": {...}
-    }
     """
     global _cached_strategy
 
     request_payload = dict(payload)
     request_options = request_payload.pop("_request_options", None) or {}
+
     if not isinstance(request_options, dict):
         raise LetterLLMError("payload._request_options는 dict여야 합니다.")
 
     timeout_override_raw = request_options.get("timeout_sec")
     timeout_override: Optional[float] = None
+
     if timeout_override_raw is not None:
         try:
             timeout_override = float(timeout_override_raw)
@@ -474,6 +543,7 @@ async def request_letter_llm(payload: Dict[str, Any]) -> Dict[str, Any]:
     errors: list[str] = []
 
     candidate_strategies = _candidate_strategies()
+
     if strategy_allowlist:
         candidate_strategies = [
             strategy for strategy in candidate_strategies if strategy.name in strategy_allowlist
@@ -498,7 +568,11 @@ async def request_letter_llm(payload: Dict[str, Any]) -> Dict[str, Any]:
                 available = await _fetch_models(client, strategy)
                 model_to_use = _resolve_model_name(requested_model, available)
 
-            outgoing_payload = _prepare_request_payload(request_payload, strategy, model_to_use)
+            outgoing_payload = _prepare_request_payload(
+                request_payload,
+                strategy,
+                model_to_use,
+            )
 
             try:
                 response = await client.post(
@@ -544,7 +618,11 @@ async def request_letter_llm(payload: Dict[str, Any]) -> Dict[str, Any]:
 
                 if _looks_like_model_not_found(response.status_code, body):
                     available_models = await _fetch_models(client, strategy)
-                    resolved_model = _resolve_model_name(requested_model, available_models)
+                    resolved_model = _resolve_model_name(
+                        requested_model,
+                        available_models,
+                    )
+
                     if resolved_model and resolved_model != model_to_use:
                         logger.info(
                             "[LETTER_LLM] retrying with discovered model. strategy=%s requested=%s resolved=%s",
@@ -552,7 +630,13 @@ async def request_letter_llm(payload: Dict[str, Any]) -> Dict[str, Any]:
                             requested_model,
                             resolved_model,
                         )
-                        retry_payload = _prepare_request_payload(request_payload, strategy, resolved_model)
+
+                        retry_payload = _prepare_request_payload(
+                            request_payload,
+                            strategy,
+                            resolved_model,
+                        )
+
                         try:
                             retry_response = await client.post(
                                 strategy.url,
@@ -631,6 +715,7 @@ async def request_letter_llm(payload: Dict[str, Any]) -> Dict[str, Any]:
             }
 
     joined_errors = " | ".join(errors[:5]) if errors else "no strategies succeeded"
+
     raise LetterLLMError(
         "LLM 요청에 실패했습니다. "
         "LLM_BASE_URL이 OpenWebUI/Ollama 주소인지, 모델명이 실제 모델 ID와 맞는지 확인하세요. "

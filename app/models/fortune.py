@@ -1,3 +1,5 @@
+# /home/dori/diary-backend/app/models/fortune.py
+
 from sqlalchemy import (
     BigInteger,
     Date,
@@ -39,3 +41,30 @@ class DailyFortune(TimestampMixin, Base):
     model: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
     user = relationship("User", back_populates="fortunes")
+
+
+class DailySajuAnalysis(TimestampMixin, Base):
+    __tablename__ = "daily_saju_analyses"
+    __table_args__ = (
+        UniqueConstraint("user_id", "analysis_date", name="uq_user_saju_analysis_date"),
+        {"mysql_engine": "InnoDB"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    analysis_date: Mapped[object] = mapped_column(Date, nullable=False, index=True)
+
+    analysis: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    model: Mapped[str | None] = mapped_column(String(50), nullable=True)
+
+    chart_provided: Mapped[bool] = mapped_column(nullable=False, default=False)
+    pillars: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    element_summary: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    saju_focus_points: Mapped[dict | None] = mapped_column(JSON, nullable=True)
