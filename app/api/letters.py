@@ -21,6 +21,8 @@ from app.services.letter_generator import generate_otter_letter
 
 router = APIRouter(prefix="/api/letters", tags=["Letters"])
 
+LETTER_PEARL_COST = 1
+
 
 def kst_now():
     return datetime.now(ZoneInfo("Asia/Seoul"))
@@ -32,6 +34,32 @@ def kst_today_date():
 
 def kst_previous_day_date():
     return kst_today_date() - timedelta(days=1)
+
+
+def create_letter_for_entry(
+    db: Session,
+    user: User,
+    entry: DiaryEntry,
+    content: str,
+    element_hint=None,
+    model: str | None = None,
+) -> OtterLetter:
+    letter = OtterLetter(
+        user_id=user.id,
+        diary_entry_id=entry.id,
+        letter_date=entry.entry_date,
+        content=content,
+        element_hint=element_hint,
+        model=model,
+        is_read=False,
+        read_at=None,
+    )
+
+    db.add(letter)
+    db.commit()
+    db.refresh(letter)
+
+    return letter
 
 
 @router.get("", response_model=list[OtterLetterResponse])
@@ -92,7 +120,7 @@ def get_latest_letter(
 async def generate_letter_by_date(
     target_date: date | None = Query(
         default=None,
-        description="생성할 대상 일기 날짜. 없으면 전날(KST) 기준으로 생성합니다. 예: 2026-03-09",
+        description="생성할 대상 일기 날짜. 없으면 전날(KST) 기준으로 생성합니다.",
     ),
     force: bool = Query(False, description="true면 기존 편지를 삭제하고 재생성합니다"),
     user: User = Depends(get_current_user),
@@ -111,11 +139,7 @@ async def generate_letter_by_date(
             detail=f"{diary_date} 일기가 없습니다. 먼저 일기를 작성하세요.",
         )
 
-    exists = (
-        db.query(OtterLetter)
-        .filter(OtterLetter.diary_entry_id == entry.id)
-        .first()
-    )
+    exists = db.query(OtterLetter).filter(OtterLetter.diary_entry_id == entry.id).first()
 
     if exists and not force:
         return exists
@@ -135,19 +159,84 @@ async def generate_letter_by_date(
 
     data = await generate_otter_letter(user=user, diary_entry=entry, fortune=fortune)
 
+    return create_letter_for_entry(
+        db=db,
+        user=user,
+        entry=entry,
+        content=data.get("content", ""),
+        element_hint=data.get("element_hint"),
+        model=data.get("model"),
+    )
+
+
+@router.post("/generate-with-pearl", response_model=OtterLetterResponse)
+async def generate_letter_with_pearl(
+    target_date: date = Query(
+        ...,
+        description="진주를 사용해 답장을 받을 일기 날짜. 예: 2026-05-10",
+    ),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    today = kst_today_date()
+
+    if target_date > today:
+        raise HTTPException(
+            status_code=403,
+            detail="미래 날짜의 일기에는 답장을 받을 수 없습니다.",
+        )
+
+    entry = (
+        db.query(DiaryEntry)
+        .filter(DiaryEntry.user_id == user.id, DiaryEntry.entry_date == target_date)
+        .first()
+    )
+
+    if not entry:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{target_date} 일기가 없습니다. 먼저 일기를 작성하세요.",
+        )
+
+    exists = db.query(OtterLetter).filter(OtterLetter.diary_entry_id == entry.id).first()
+
+    if exists:
+        return exists
+
+    if user.pearls < LETTER_PEARL_COST:
+        raise HTTPException(
+            status_code=400,
+            detail=f"진주가 부족합니다. 답장을 받으려면 진주 {LETTER_PEARL_COST}개가 필요합니다.",
+        )
+
+    fortune = (
+        db.query(DailyFortune)
+        .filter(
+            DailyFortune.user_id == user.id,
+            DailyFortune.fortune_date == target_date,
+        )
+        .first()
+    )
+
+    data = await generate_otter_letter(user=user, diary_entry=entry, fortune=fortune)
+
+    user.pearls -= LETTER_PEARL_COST
+
     letter = OtterLetter(
         user_id=user.id,
         diary_entry_id=entry.id,
-        letter_date=diary_date,
+        letter_date=target_date,
         content=data.get("content", ""),
         element_hint=data.get("element_hint"),
         model=data.get("model"),
         is_read=False,
         read_at=None,
     )
+
     db.add(letter)
     db.commit()
     db.refresh(letter)
+
     return letter
 
 
@@ -162,8 +251,10 @@ def get_today_letter(
         .order_by(OtterLetter.letter_date.desc(), OtterLetter.id.desc())
         .first()
     )
+
     if not letter:
         raise HTTPException(status_code=404, detail="편지가 아직 없습니다")
+
     return letter
 
 
@@ -178,8 +269,10 @@ def get_letter_by_id(
         .filter(OtterLetter.id == letter_id, OtterLetter.user_id == user.id)
         .first()
     )
+
     if not letter:
         raise HTTPException(status_code=404, detail="편지를 찾을 수 없습니다")
+
     return letter
 
 
@@ -194,6 +287,7 @@ def mark_letter_as_read(
         .filter(OtterLetter.id == letter_id, OtterLetter.user_id == user.id)
         .first()
     )
+
     if not letter:
         raise HTTPException(status_code=404, detail="편지를 찾을 수 없습니다")
 
@@ -218,10 +312,12 @@ def update_letter_favorite(
         .filter(OtterLetter.id == letter_id, OtterLetter.user_id == user.id)
         .first()
     )
+
     if not letter:
         raise HTTPException(status_code=404, detail="편지를 찾을 수 없습니다")
 
     letter.is_favorite = payload.is_favorite
     db.commit()
     db.refresh(letter)
+
     return letter

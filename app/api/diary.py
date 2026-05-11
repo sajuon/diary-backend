@@ -6,6 +6,7 @@ import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from app.core.deps import get_db, get_current_user
 from app.models.user import User
@@ -32,6 +33,16 @@ def is_before_11pm_kst():
     return kst_now().hour < 23
 
 
+def parse_date_string(date: str):
+    try:
+        return datetime.fromisoformat(date).date()
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="잘못된 날짜 형식입니다 (YYYY-MM-DD)",
+        )
+
+
 def parse_month_string(month: str) -> tuple[int, int]:
     try:
         year, mon = map(int, month.split("-"))
@@ -48,6 +59,24 @@ def parse_month_string(month: str) -> tuple[int, int]:
         )
 
     return year, mon
+
+
+def get_requested_entry_date(data: DiaryCreateRequest):
+    today = kst_today_date()
+    raw_entry_date = getattr(data, "entry_date", None)
+
+    if raw_entry_date:
+        entry_date = parse_date_string(str(raw_entry_date))
+    else:
+        entry_date = today
+
+    if entry_date > today:
+        raise HTTPException(
+            status_code=403,
+            detail="미래 날짜의 일기는 미리 작성할 수 없습니다",
+        )
+
+    return entry_date
 
 
 @router.get("/question", response_model=DiaryQuestionResponse)
@@ -75,8 +104,10 @@ def get_today_diary(
         .filter(DiaryEntry.user_id == user.id, DiaryEntry.entry_date == today)
         .first()
     )
+
     if not entry:
         raise HTTPException(status_code=404, detail="오늘 일기가 없습니다")
+
     return entry
 
 
@@ -86,51 +117,56 @@ async def create_today_diary(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    today = kst_today_date()
+    entry_date = get_requested_entry_date(data)
 
     exists = (
         db.query(DiaryEntry)
-        .filter(DiaryEntry.user_id == user.id, DiaryEntry.entry_date == today)
+        .filter(DiaryEntry.user_id == user.id, DiaryEntry.entry_date == entry_date)
         .first()
     )
+
     if exists:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="오늘 일기는 이미 작성했습니다",
+            detail="해당 날짜의 일기는 이미 작성했습니다",
         )
 
     logger.info(
-        "[DIARY_CREATE] start user_id=%s today=%s content_len=%s",
+        "[DIARY_CREATE] start user_id=%s entry_date=%s content_len=%s",
         user.id,
-        str(today),
+        str(entry_date),
         len(data.content or ""),
     )
 
     summary_tag = await generate_summary_tag(data.content)
 
-    logger.info(
-        "[DIARY_CREATE] generated summary_tag user_id=%s today=%s summary_tag=%s",
-        user.id,
-        str(today),
-        summary_tag,
-    )
-
     entry = DiaryEntry(
         user_id=user.id,
-        entry_date=today,
+        entry_date=entry_date,
         content=data.content,
         weather=data.weather,
         mood_tags=data.mood_tags,
         summary_tag=summary_tag,
     )
+
     db.add(entry)
-    db.commit()
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="해당 날짜의 일기는 이미 작성했습니다",
+        )
+
     db.refresh(entry)
 
     logger.info(
-        "[DIARY_CREATE] saved entry_id=%s user_id=%s summary_tag=%s",
+        "[DIARY_CREATE] saved entry_id=%s user_id=%s entry_date=%s summary_tag=%s",
         entry.id,
         user.id,
+        str(entry.entry_date),
         entry.summary_tag,
     )
 
@@ -150,6 +186,7 @@ async def update_today_diary(
         .filter(DiaryEntry.user_id == user.id, DiaryEntry.entry_date == today)
         .first()
     )
+
     if not entry:
         raise HTTPException(status_code=404, detail="오늘 일기가 없습니다")
 
@@ -173,22 +210,8 @@ async def update_today_diary(
     entry.mood_tags = data.mood_tags
     entry.summary_tag = await generate_summary_tag(data.content)
 
-    logger.info(
-        "[DIARY_UPDATE_TODAY] generated summary_tag entry_id=%s user_id=%s new_tag=%s",
-        entry.id,
-        user.id,
-        entry.summary_tag,
-    )
-
     db.commit()
     db.refresh(entry)
-
-    logger.info(
-        "[DIARY_UPDATE_TODAY] saved entry_id=%s user_id=%s summary_tag=%s",
-        entry.id,
-        user.id,
-        entry.summary_tag,
-    )
 
     return entry
 
@@ -199,21 +222,17 @@ def get_diary_by_date(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    try:
-        entry_date = datetime.fromisoformat(date).date()
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail="잘못된 날짜 형식입니다 (YYYY-MM-DD)",
-        )
+    entry_date = parse_date_string(date)
 
     entry = (
         db.query(DiaryEntry)
         .filter(DiaryEntry.user_id == user.id, DiaryEntry.entry_date == entry_date)
         .first()
     )
+
     if not entry:
         raise HTTPException(status_code=404, detail="해당 날짜의 일기가 없습니다")
+
     return entry
 
 
@@ -224,23 +243,16 @@ async def update_diary_by_date(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    try:
-        entry_date = datetime.fromisoformat(date).date()
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail="잘못된 날짜 형식입니다 (YYYY-MM-DD)",
-        )
-
+    entry_date = parse_date_string(date)
     today = kst_today_date()
 
-    if entry_date != today:
+    if entry_date > today:
         raise HTTPException(
             status_code=403,
-            detail="오늘 일기만 수정할 수 있습니다",
+            detail="미래 날짜의 일기는 수정할 수 없습니다",
         )
 
-    if not is_before_11pm_kst():
+    if entry_date == today and not is_before_11pm_kst():
         raise HTTPException(
             status_code=403,
             detail="오늘 일기는 오후 11시까지만 수정할 수 있습니다",
@@ -251,6 +263,7 @@ async def update_diary_by_date(
         .filter(DiaryEntry.user_id == user.id, DiaryEntry.entry_date == entry_date)
         .first()
     )
+
     if not entry:
         raise HTTPException(status_code=404, detail="해당 날짜의 일기가 없습니다")
 
@@ -267,13 +280,6 @@ async def update_diary_by_date(
     entry.weather = data.weather
     entry.mood_tags = data.mood_tags
     entry.summary_tag = await generate_summary_tag(data.content)
-
-    logger.info(
-        "[DIARY_UPDATE_BY_DATE] generated summary_tag entry_id=%s user_id=%s new_tag=%s",
-        entry.id,
-        user.id,
-        entry.summary_tag,
-    )
 
     db.commit()
     db.refresh(entry)
@@ -294,19 +300,14 @@ def delete_diary_by_date(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    try:
-        entry_date = datetime.fromisoformat(date).date()
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail="잘못된 날짜 형식입니다 (YYYY-MM-DD)",
-        )
+    entry_date = parse_date_string(date)
 
     entry = (
         db.query(DiaryEntry)
         .filter(DiaryEntry.user_id == user.id, DiaryEntry.entry_date == entry_date)
         .first()
     )
+
     if not entry:
         raise HTTPException(status_code=404, detail="해당 날짜의 일기가 없습니다")
 
@@ -319,6 +320,7 @@ def delete_diary_by_date(
 
     db.delete(entry)
     db.commit()
+
     return {"detail": "일기가 삭제되었습니다"}
 
 
@@ -344,6 +346,7 @@ def list_diaries(
         .order_by(DiaryEntry.entry_date.desc())
         .all()
     )
+
     return entries
 
 
@@ -391,14 +394,6 @@ async def generate_missing_summary_tags(
                 DiaryEntry.entry_date <= end,
             )
 
-            logger.info(
-                "[SUMMARY_TAG_BATCH] applied month filter user_id=%s month=%s start=%s end=%s",
-                user.id,
-                month,
-                start,
-                end,
-            )
-
         total_candidates_before_filter = base_query.count()
 
         if not force:
@@ -406,26 +401,9 @@ async def generate_missing_summary_tags(
                 (DiaryEntry.summary_tag.is_(None)) | (DiaryEntry.summary_tag == "")
             )
 
-        entries = (
-            base_query.order_by(DiaryEntry.entry_date.asc())
-            .limit(limit)
-            .all()
-        )
-
-        logger.info(
-            "[SUMMARY_TAG_BATCH] selected entries user_id=%s total_candidates_before_filter=%s selected_count=%s",
-            user.id,
-            total_candidates_before_filter,
-            len(entries),
-        )
+        entries = base_query.order_by(DiaryEntry.entry_date.asc()).limit(limit).all()
 
         if not entries:
-            logger.warning(
-                "[SUMMARY_TAG_BATCH] no entries to process user_id=%s month=%s force=%s",
-                user.id,
-                month,
-                force,
-            )
             return {
                 "message": "태그 없는 일기가 없습니다.",
                 "updated_count": 0,
@@ -444,20 +422,7 @@ async def generate_missing_summary_tags(
             try:
                 content = (entry.content or "").strip()
 
-                logger.info(
-                    "[SUMMARY_TAG_BATCH] processing entry_id=%s entry_date=%s content_len=%s old_tag=%s",
-                    entry.id,
-                    str(entry.entry_date),
-                    len(content),
-                    entry.summary_tag,
-                )
-
                 if not content:
-                    logger.warning(
-                        "[SUMMARY_TAG_BATCH] skipped empty content entry_id=%s entry_date=%s",
-                        entry.id,
-                        str(entry.entry_date),
-                    )
                     failed_items.append(
                         {
                             "id": entry.id,
@@ -467,20 +432,7 @@ async def generate_missing_summary_tags(
                     )
                     continue
 
-                logger.info(
-                    "[SUMMARY_TAG_BATCH] tag generation start entry_id=%s preview=%s",
-                    entry.id,
-                    content[:120].replace("\n", " "),
-                )
-
                 summary_tag = await generate_summary_tag(content)
-
-                logger.info(
-                    "[SUMMARY_TAG_BATCH] tag generation done entry_id=%s generated_tag=%s",
-                    entry.id,
-                    summary_tag,
-                )
-
                 entry.summary_tag = summary_tag
 
                 updated_items.append(
@@ -506,21 +458,8 @@ async def generate_missing_summary_tags(
                     }
                 )
 
-        logger.info(
-            "[SUMMARY_TAG_BATCH] pre-commit user_id=%s updated_count=%s failed_count=%s updated_ids=%s",
-            user.id,
-            len(updated_items),
-            len(failed_items),
-            [item["id"] for item in updated_items],
-        )
-
         try:
             db.commit()
-            logger.info(
-                "[SUMMARY_TAG_BATCH] commit success user_id=%s updated_count=%s",
-                user.id,
-                len(updated_items),
-            )
         except Exception as e:
             db.rollback()
             logger.exception(
@@ -535,6 +474,7 @@ async def generate_missing_summary_tags(
 
         verify_ids = [item["id"] for item in updated_items]
         verify_rows = []
+
         if verify_ids:
             verify_rows = (
                 db.query(DiaryEntry)

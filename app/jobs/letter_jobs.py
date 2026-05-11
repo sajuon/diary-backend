@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
@@ -26,6 +26,14 @@ def previous_day_date():
     return (kst_now() - timedelta(days=1)).date()
 
 
+def kst_day_start(target_date):
+    return datetime.combine(target_date, time.min, tzinfo=KST)
+
+
+def kst_day_end(target_date):
+    return datetime.combine(target_date, time.max, tzinfo=KST)
+
+
 def _reply_notification_title() -> str:
     return "해도리가 답장을 보냈어요!"
 
@@ -37,10 +45,9 @@ def _reply_notification_body(diary_date) -> str:
 async def generate_letters_for_previous_day():
     """
     매일 00:00 KST에 실행:
-    - 전날 일기 쓴 유저들 중
-    - 아직 해당 일기에 대한 편지가 없는 경우
-    - 편지 생성해서 저장
-    - 편지 날짜(letter_date)는 전날 날짜로 저장
+    - 전날 날짜의 일기 중
+    - 실제 작성 시각(created_at)도 전날인 일기만 자동 답장 생성
+    - 즉, 오늘 뒤늦게 작성한 과거 날짜 일기는 자동 답장 생성 X
     """
     diary_date = previous_day_date()
 
@@ -54,17 +61,42 @@ async def generate_letters_for_previous_day():
     created = 0
     skipped_exists = 0
     skipped_no_user = 0
+    skipped_late_written = 0
     failed = 0
 
     try:
-        diaries = db.query(DiaryEntry).filter(DiaryEntry.entry_date == diary_date).all()
+        start_dt = kst_day_start(diary_date)
+        end_dt = kst_day_end(diary_date)
+
+        diaries = (
+            db.query(DiaryEntry)
+            .filter(
+                DiaryEntry.entry_date == diary_date,
+                DiaryEntry.created_at >= start_dt,
+                DiaryEntry.created_at <= end_dt,
+            )
+            .all()
+        )
 
         if not diaries:
-            logger.info("[SCHEDULER] no diaries for diary_date=%s. done.", diary_date)
+            logger.info(
+                "[SCHEDULER] no eligible diaries for diary_date=%s. done.",
+                diary_date,
+            )
             return
 
         for entry in diaries:
             try:
+                if not (start_dt <= entry.created_at <= end_dt):
+                    skipped_late_written += 1
+                    logger.info(
+                        "[SCHEDULER] skipped late-written diary. entry_id=%s entry_date=%s created_at=%s",
+                        entry.id,
+                        entry.entry_date,
+                        entry.created_at,
+                    )
+                    continue
+
                 exists = (
                     db.query(OtterLetter)
                     .filter(OtterLetter.diary_entry_id == entry.id)
@@ -120,11 +152,12 @@ async def generate_letters_for_previous_day():
                 continue
 
         logger.info(
-            "[SCHEDULER] done. diary_date=%s created=%s skipped_exists=%s skipped_no_user=%s failed=%s",
+            "[SCHEDULER] done. diary_date=%s created=%s skipped_exists=%s skipped_no_user=%s skipped_late_written=%s failed=%s",
             diary_date,
             created,
             skipped_exists,
             skipped_no_user,
+            skipped_late_written,
             failed,
         )
 
@@ -135,7 +168,7 @@ async def generate_letters_for_previous_day():
 async def send_reply_notifications_for_previous_day():
     """
     매일 06:00 KST에 실행:
-    - 전날 일기에 대한 편지가 생성된 유저 중
+    - 전날 정상 작성된 일기에 대한 편지가 생성된 유저 중
     - 아직 읽지 않은 편지가 있는 경우
     - 웹 푸시 알림 전송
     """
@@ -146,8 +179,6 @@ async def send_reply_notifications_for_previous_day():
         diary_date,
     )
 
-    # If the midnight generation job was missed or the app restarted late,
-    # make sure the previous day's letters exist before sending pushes.
     await generate_letters_for_previous_day()
 
     db: Session = SessionLocal()
@@ -187,6 +218,7 @@ async def send_reply_notifications_for_previous_day():
                 url=f"/letter-detail/{letter.id}",
                 notification_type="reply",
             )
+
             processed += 1
             sent += int(result.get("sent") or 0)
             skipped += int(result.get("skipped") or 0)
@@ -211,5 +243,6 @@ async def send_reply_notifications_for_previous_day():
             sent,
             skipped,
         )
+
     finally:
         db.close()
