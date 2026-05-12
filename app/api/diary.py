@@ -1,3 +1,5 @@
+# /home/dori/diary-backend/app/api/diary.py
+
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import calendar
@@ -61,6 +63,23 @@ def parse_month_string(month: str) -> tuple[int, int]:
     return year, mon
 
 
+def normalize_diary_type(diary_type: str | None) -> str:
+    if diary_type in ("question", "free"):
+        return diary_type
+    return "free"
+
+
+def normalize_question_text(diary_type: str, question_text: str | None) -> str | None:
+    if diary_type != "question":
+        return None
+
+    if question_text is None:
+        return None
+
+    cleaned = question_text.strip()
+    return cleaned or None
+
+
 def get_requested_entry_date(data: DiaryCreateRequest):
     today = kst_today_date()
     raw_entry_date = getattr(data, "entry_date", None)
@@ -99,6 +118,7 @@ def get_today_diary(
     db: Session = Depends(get_db),
 ):
     today = kst_today_date()
+
     entry = (
         db.query(DiaryEntry)
         .filter(DiaryEntry.user_id == user.id, DiaryEntry.entry_date == today)
@@ -131,10 +151,14 @@ async def create_today_diary(
             detail="해당 날짜의 일기는 이미 작성했습니다",
         )
 
+    diary_type = normalize_diary_type(data.diary_type)
+    question_text = normalize_question_text(diary_type, data.question_text)
+
     logger.info(
-        "[DIARY_CREATE] start user_id=%s entry_date=%s content_len=%s",
+        "[DIARY_CREATE] start user_id=%s entry_date=%s diary_type=%s content_len=%s",
         user.id,
         str(entry_date),
+        diary_type,
         len(data.content or ""),
     )
 
@@ -147,6 +171,8 @@ async def create_today_diary(
         weather=data.weather,
         mood_tags=data.mood_tags,
         summary_tag=summary_tag,
+        diary_type=diary_type,
+        question_text=question_text,
     )
 
     db.add(entry)
@@ -163,10 +189,11 @@ async def create_today_diary(
     db.refresh(entry)
 
     logger.info(
-        "[DIARY_CREATE] saved entry_id=%s user_id=%s entry_date=%s summary_tag=%s",
+        "[DIARY_CREATE] saved entry_id=%s user_id=%s entry_date=%s diary_type=%s summary_tag=%s",
         entry.id,
         user.id,
         str(entry.entry_date),
+        entry.diary_type,
         entry.summary_tag,
     )
 
@@ -196,11 +223,15 @@ async def update_today_diary(
             detail="오늘 일기는 오후 11시까지만 수정할 수 있습니다",
         )
 
+    diary_type = normalize_diary_type(data.diary_type)
+    question_text = normalize_question_text(diary_type, data.question_text)
+
     logger.info(
-        "[DIARY_UPDATE_TODAY] start entry_id=%s user_id=%s today=%s content_len=%s old_tag=%s",
+        "[DIARY_UPDATE_TODAY] start entry_id=%s user_id=%s today=%s diary_type=%s content_len=%s old_tag=%s",
         entry.id,
         user.id,
         str(today),
+        diary_type,
         len(data.content or ""),
         entry.summary_tag,
     )
@@ -209,6 +240,8 @@ async def update_today_diary(
     entry.weather = data.weather
     entry.mood_tags = data.mood_tags
     entry.summary_tag = await generate_summary_tag(data.content)
+    entry.diary_type = diary_type
+    entry.question_text = question_text
 
     db.commit()
     db.refresh(entry)
@@ -267,11 +300,15 @@ async def update_diary_by_date(
     if not entry:
         raise HTTPException(status_code=404, detail="해당 날짜의 일기가 없습니다")
 
+    diary_type = normalize_diary_type(data.diary_type)
+    question_text = normalize_question_text(diary_type, data.question_text)
+
     logger.info(
-        "[DIARY_UPDATE_BY_DATE] start entry_id=%s user_id=%s entry_date=%s content_len=%s old_tag=%s",
+        "[DIARY_UPDATE_BY_DATE] start entry_id=%s user_id=%s entry_date=%s diary_type=%s content_len=%s old_tag=%s",
         entry.id,
         user.id,
         str(entry_date),
+        diary_type,
         len(data.content or ""),
         entry.summary_tag,
     )
@@ -280,14 +317,17 @@ async def update_diary_by_date(
     entry.weather = data.weather
     entry.mood_tags = data.mood_tags
     entry.summary_tag = await generate_summary_tag(data.content)
+    entry.diary_type = diary_type
+    entry.question_text = question_text
 
     db.commit()
     db.refresh(entry)
 
     logger.info(
-        "[DIARY_UPDATE_BY_DATE] saved entry_id=%s user_id=%s summary_tag=%s",
+        "[DIARY_UPDATE_BY_DATE] saved entry_id=%s user_id=%s diary_type=%s summary_tag=%s",
         entry.id,
         user.id,
+        entry.diary_type,
         entry.summary_tag,
     )
 
@@ -413,6 +453,7 @@ async def generate_missing_summary_tags(
                 "month": month,
                 "force": force,
                 "limit": limit,
+                "total_candidates_before_filter": total_candidates_before_filter,
             }
 
         updated_items = []
@@ -513,6 +554,7 @@ async def generate_missing_summary_tags(
             "month": month,
             "force": force,
             "limit": limit,
+            "total_candidates_before_filter": total_candidates_before_filter,
             "elapsed_ms": elapsed_ms,
         }
 
