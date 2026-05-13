@@ -20,9 +20,16 @@ class DiaryCreateRequest(BaseModel):
 
     # question: 질문형 일기
     # free: 자유 일기
-    diary_type: Optional[DiaryType] = "free"
+    # 하루에 question 1개 + free 1개까지 가능
+    diary_type: DiaryType = "free"
+
+    # 질문형 일기 고정 ID
+    # 예: 03-01, 05-12
+    # 자유형이면 None으로 저장
+    question_id: Optional[str] = None
 
     # 질문형 일기일 때 오늘의 질문 문구
+    # 자유형이면 None으로 저장
     question_text: Optional[str] = None
 
 
@@ -42,7 +49,9 @@ class DiaryEntryResponse(BaseModel):
 
     summary_tag: Optional[str] = None
 
-    diary_type: Optional[str] = None
+    diary_type: DiaryType = "free"
+
+    question_id: Optional[str] = None
 
     question_text: Optional[str] = None
 

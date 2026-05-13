@@ -17,7 +17,12 @@ from app.models.base import Base, TimestampMixin
 class DiaryEntry(TimestampMixin, Base):
     __tablename__ = "diary_entries"
     __table_args__ = (
-        UniqueConstraint("user_id", "entry_date", name="uq_user_entry_date"),
+        UniqueConstraint(
+            "user_id",
+            "entry_date",
+            "diary_type",
+            name="uq_user_entry_date_diary_type",
+        ),
         {"mysql_engine": "InnoDB"},
     )
 
@@ -40,16 +45,28 @@ class DiaryEntry(TimestampMixin, Base):
 
     summary_tag: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
-    # 질문형 / 자유형 구분
     # question: 질문형 일기
     # free: 자유 일기
-    diary_type: Mapped[str | None] = mapped_column(
+    # 하루에 question 1개 + free 1개까지 저장 가능
+    diary_type: Mapped[str] = mapped_column(
         String(20),
-        nullable=True,
+        nullable=False,
         default="free",
+        server_default="free",
+        index=True,
     )
 
-    # 질문형 일기일 때 사용자가 답한 질문 문구 저장
+    # 질문형 일기 고정 ID
+    # 예: 03-01, 05-12
+    # 자유형 일기일 때는 NULL
+    question_id: Mapped[str | None] = mapped_column(
+        String(20),
+        nullable=True,
+        index=True,
+    )
+
+    # 질문형 일기일 때 오늘의 질문 문구 저장
+    # 자유형 일기일 때는 NULL
     question_text: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
