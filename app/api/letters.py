@@ -1,3 +1,7 @@
+# /home/dori/diary-backend/app/api/letters.py
+# 역할: 자유형 일기에 대한 해도리 답장 조회/생성 API
+# 수정 내용: 오늘 날짜 일기는 23:59까지 진주 차감 없이 답장 생성, 지난 날짜 일기는 진주 1개 차감
+
 from __future__ import annotations
 
 from datetime import datetime, date, timedelta
@@ -206,7 +210,7 @@ async def generate_letter_by_date(
 async def generate_letter_with_pearl(
     target_date: date = Query(
         ...,
-        description="진주를 사용해 답장을 받을 자유형 일기 날짜. 예: 2026-05-10",
+        description="답장을 받을 자유형 일기 날짜. 오늘 일기는 무료, 지난 일기는 진주를 사용합니다. 예: 2026-05-10",
     ),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -219,6 +223,8 @@ async def generate_letter_with_pearl(
             detail="미래 날짜의 일기에는 답장을 받을 수 없습니다.",
         )
 
+    is_today_diary = target_date == today
+
     entry = get_free_diary_entry_or_404(
         db=db,
         user_id=user.id,
@@ -230,11 +236,12 @@ async def generate_letter_with_pearl(
     if exists:
         return exists
 
-    if user.pearls < LETTER_PEARL_COST:
-        raise HTTPException(
-            status_code=400,
-            detail=f"진주가 부족합니다. 답장을 받으려면 진주 {LETTER_PEARL_COST}개가 필요합니다.",
-        )
+    if not is_today_diary:
+        if user.pearls < LETTER_PEARL_COST:
+            raise HTTPException(
+                status_code=400,
+                detail=f"진주가 부족합니다. 답장을 받으려면 진주 {LETTER_PEARL_COST}개가 필요합니다.",
+            )
 
     fortune = (
         db.query(DailyFortune)
@@ -247,7 +254,8 @@ async def generate_letter_with_pearl(
 
     data = await generate_otter_letter(user=user, diary_entry=entry, fortune=fortune)
 
-    user.pearls -= LETTER_PEARL_COST
+    if not is_today_diary:
+        user.pearls -= LETTER_PEARL_COST
 
     letter = OtterLetter(
         user_id=user.id,

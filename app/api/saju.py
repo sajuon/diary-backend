@@ -1,7 +1,11 @@
+# 기존 파일 경로: /home/dori/diary-backend/app/api/saju.py
+# 수정 파일 경로: /home/dori/diary-backend/app/api/saju.py
+# 역할: 사주/운세 API 라우터. 오늘의 운세, 연애운, 재물운, 학업운 type을 받아 서로 다른 해석을 생성/반환한다.
+
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -11,8 +15,9 @@ from app.models.profile import UserBirthProfile
 from app.models.user import User
 from app.services.saju_analysis_service import generate_saju_analysis
 
-# 🔥 이게 반드시 먼저 있어야 함
 router = APIRouter(prefix="/api/saju", tags=["Saju"])
+
+ALLOWED_FORTUNE_TYPES = {"daily", "love", "money", "study"}
 
 
 def kst_today_date():
@@ -21,32 +26,15 @@ def kst_today_date():
 
 @router.get("/manse")
 async def get_manse(
+    type: str = Query(default="daily"),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     today = kst_today_date()
 
-    existing = (
-        db.query(DailySajuAnalysis)
-        .filter(
-            DailySajuAnalysis.user_id == user.id,
-            DailySajuAnalysis.analysis_date == today,
-        )
-        .first()
-    )
-
-    # 🔥 정상 결과면 캐시 반환
-    if existing and "rule-based" not in (existing.model or ""):
-        return {
-            "analysis": existing.analysis,
-            "analysis_date": existing.analysis_date.isoformat(),
-            "model": existing.model,
-            "chart_provided": existing.chart_provided,
-            "pillars": existing.pillars or [],
-            "elementSummary": existing.element_summary or {},
-            "saju_focus_points": existing.saju_focus_points or {},
-            "cached": True,
-        }
+    fortune_type = (type or "daily").strip().lower()
+    if fortune_type not in ALLOWED_FORTUNE_TYPES:
+        fortune_type = "daily"
 
     profile = (
         db.query(UserBirthProfile)
@@ -60,8 +48,32 @@ async def get_manse(
             detail="생년월일시를 먼저 등록해주세요",
         )
 
-    # 🔥 기존 rule-based 삭제
-    if existing and "rule-based" in (existing.model or ""):
+    existing = (
+        db.query(DailySajuAnalysis)
+        .filter(
+            DailySajuAnalysis.user_id == user.id,
+            DailySajuAnalysis.analysis_date == today,
+        )
+        .first()
+    )
+
+    # 현재 DB는 날짜당 1개만 저장하는 구조일 가능성이 높아서,
+    # daily만 캐시를 사용하고 love/money/study는 매번 새로 생성해서 반환한다.
+    # 나중에 fortune_type 컬럼을 추가하면 type별 캐시 저장으로 확장 가능하다.
+    if fortune_type == "daily" and existing and "rule-based" not in (existing.model or ""):
+        return {
+            "analysis": existing.analysis,
+            "analysis_date": existing.analysis_date.isoformat(),
+            "model": existing.model,
+            "chart_provided": existing.chart_provided,
+            "pillars": existing.pillars or [],
+            "elementSummary": existing.element_summary or {},
+            "saju_focus_points": existing.saju_focus_points or {},
+            "fortune_type": fortune_type,
+            "cached": True,
+        }
+
+    if fortune_type == "daily" and existing and "rule-based" in (existing.model or ""):
         db.delete(existing)
         db.commit()
 
@@ -69,9 +81,19 @@ async def get_manse(
         user=user,
         profile=profile,
         analysis_date=today,
+        fortune_type=fortune_type,
     )
 
-    # 🔥 rule-based면 저장 안 함
+    data["fortune_type"] = fortune_type
+
+    # daily 외 type은 현재 테이블 구조상 저장하지 않고 바로 반환한다.
+    if fortune_type != "daily":
+        return {
+            **data,
+            "cached": False,
+        }
+
+    # rule-based fallback이면 저장하지 않는다.
     if "rule-based" in (data.get("model") or ""):
         return {
             **data,
@@ -102,9 +124,33 @@ async def get_manse(
             "pillars": saju_analysis.pillars or [],
             "elementSummary": saju_analysis.element_summary or {},
             "saju_focus_points": saju_analysis.saju_focus_points or {},
+            "fortune_type": fortune_type,
             "cached": False,
         }
 
     except IntegrityError:
         db.rollback()
+
+        latest = (
+            db.query(DailySajuAnalysis)
+            .filter(
+                DailySajuAnalysis.user_id == user.id,
+                DailySajuAnalysis.analysis_date == today,
+            )
+            .first()
+        )
+
+        if latest:
+            return {
+                "analysis": latest.analysis,
+                "analysis_date": latest.analysis_date.isoformat(),
+                "model": latest.model,
+                "chart_provided": latest.chart_provided,
+                "pillars": latest.pillars or [],
+                "elementSummary": latest.element_summary or {},
+                "saju_focus_points": latest.saju_focus_points or {},
+                "fortune_type": fortune_type,
+                "cached": True,
+            }
+
         raise
