@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
 from fastapi.security import OAuth2PasswordRequestForm
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -28,6 +29,11 @@ from app.services.oauth import OAuthError, get_user_info_from_code
 
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
+
+
+class ReviewerLoginRequest(BaseModel):
+    username: str
+    password: str
 
 
 def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
@@ -114,6 +120,38 @@ def login(
     user = crud_user.get_user_by_email(db, form_data.username)
     if not user or not verify_password(form_data.password, user.password or ""):
         raise HTTPException(status_code=400, detail="이메일 또는 비밀번호 오류")
+
+    access_token = create_access_token({"user_id": user.id})
+    refresh_token = create_refresh_token({"user_id": user.id})
+
+    _set_refresh_cookie(response, refresh_token)
+
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
+@router.post("/reviewer-login")
+def reviewer_login(
+    data: ReviewerLoginRequest,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    """
+    Google Play 심사(리뷰어) 전용 로그인.
+    카카오 OAuth를 우회해서 사전에 DB에 만들어둔 테스트 유저로 바로 로그인시킨다.
+    .env의 REVIEWER_TEST_EMAIL / REVIEWER_TEST_PASSWORD 와 정확히 일치할 때만 동작한다.
+    """
+    if not settings.REVIEWER_TEST_EMAIL or not settings.REVIEWER_TEST_PASSWORD or not settings.REVIEWER_TEST_USER_ID:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    if (
+        data.username != settings.REVIEWER_TEST_EMAIL
+        or data.password != settings.REVIEWER_TEST_PASSWORD
+    ):
+        raise HTTPException(status_code=401, detail="이메일 또는 비밀번호 오류")
+
+    user = db.query(User).filter(User.id == settings.REVIEWER_TEST_USER_ID).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="테스트 유저가 존재하지 않습니다")
 
     access_token = create_access_token({"user_id": user.id})
     refresh_token = create_refresh_token({"user_id": user.id})

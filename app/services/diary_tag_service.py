@@ -94,7 +94,7 @@ def build_summary_tag_prompt(content: str) -> str:
 
 def _chat_completions_url() -> str:
     base = settings.LLM_BASE_URL.rstrip("/")
-    return f"{base}/api/chat/completions"
+    return f"{base}/chat/completions"
 
 
 def _headers() -> dict[str, str]:

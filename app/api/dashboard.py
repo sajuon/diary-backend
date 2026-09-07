@@ -1,8 +1,7 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from sqlalchemy import func
 from pydantic import BaseModel
 from typing import Optional
 
@@ -15,6 +14,7 @@ from app.schemas.diary import DiaryEntryResponse
 from app.schemas.fortune import DailyFortuneResponse
 from app.schemas.letter import OtterLetterResponse
 from app.schemas.auth import UserResponse
+from app.services.streak import calc_streak_summary
 
 
 router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
@@ -58,35 +58,31 @@ def get_dashboard(
         .first()
     )
 
-    total_diaries = (
-        db.query(func.count(DiaryEntry.id))
-        .filter(DiaryEntry.user_id == user.id)
-        .scalar()
-    )
-
-    has_today = today_diary is not None
-    consecutive_days = 0
-    check_date = today if has_today else (today - timedelta(days=1))
-
-    while True:
-        exists = (
-            db.query(DiaryEntry.id)
-            .filter(DiaryEntry.user_id == user.id, DiaryEntry.entry_date == check_date)
-            .first()
-        )
-        if not exists:
-            break
-        consecutive_days += 1
-        check_date -= timedelta(days=1)
+    summary = calc_streak_summary(db, user.id)
 
     diary_stats = {
-        "total_diaries": int(total_diaries or 0),
-        "consecutive_days": consecutive_days,
-        "has_today": has_today,
+        "total_diaries": summary["total_diaries"],
+        "consecutive_days": summary["streak"],
+        "has_today": summary["has_today"],
+    }
+
+    user_payload = {
+        "id": user.id,
+        "email": user.email,
+        "nickname": user.nickname,
+        "profile_image": getattr(user, "profile_image", None),
+        "provider": user.provider,
+        "provider_id": getattr(user, "provider_id", None),
+        "pearls": getattr(user, "pearls", 0),
+        "created_at": user.created_at,
+        "updated_at": user.updated_at,
+        "streak_n": summary["streak_n"],
+        "has_today": summary["has_today"],
+        "total_diaries": summary["total_diaries"],
     }
 
     return {
-        "user": user,
+        "user": user_payload,
         "today_diary": today_diary,
         "today_fortune": today_fortune,
         "today_letter": today_letter,

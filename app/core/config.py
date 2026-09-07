@@ -57,5 +57,21 @@ class Settings(BaseSettings):
 
     LLM_TIMEOUT_SEC: int = 180
 
+    # 편지 배치 스케줄 설정 (KST 기준)
+    # LETTER_GENERATE_*: 전날 일기를 모아 LLM으로 편지를 생성하는 시각
+    # LETTER_PUSH_*: 생성된 편지에 대해 푸시 알림을 발송하는 시각
+    LETTER_GENERATE_HOUR: int = Field(default=0, ge=0, le=23)
+    LETTER_GENERATE_MINUTE: int = Field(default=0, ge=0, le=59)
+    LETTER_PUSH_HOUR: int = Field(default=6, ge=0, le=23)
+    LETTER_PUSH_MINUTE: int = Field(default=0, ge=0, le=59)
+
+    # 실험용: True면 "오늘" 일기를 대상으로 편지 생성 (운영은 반드시 False)
+    LETTER_TARGET_TODAY: bool = False
+
+    # Google Play 심사(리뷰어) 전용 우회 로그인 설정
+    REVIEWER_TEST_EMAIL: Optional[str] = None
+    REVIEWER_TEST_PASSWORD: Optional[str] = None
+    REVIEWER_TEST_USER_ID: Optional[int] = None
+
 
 settings = Settings()

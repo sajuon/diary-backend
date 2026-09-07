@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.user import User
 from app.models.diary import DiaryEntry
@@ -17,6 +18,8 @@ from app.services.web_push import send_web_push_to_user
 logger = logging.getLogger(__name__)
 KST = ZoneInfo("Asia/Seoul")
 
+TARGET_TODAY = bool(settings.LETTER_TARGET_TODAY)
+
 
 def kst_now():
     return datetime.now(KST)
@@ -24,6 +27,19 @@ def kst_now():
 
 def previous_day_date():
     return (kst_now() - timedelta(days=1)).date()
+
+
+def today_date():
+    return kst_now().date()
+
+
+def target_diary_date():
+    """
+    편지 생성/푸시 대상 날짜.
+    - 기본(운영): 전날
+    - LETTER_TARGET_TODAY=true (실험용): 오늘
+    """
+    return today_date() if TARGET_TODAY else previous_day_date()
 
 
 def kst_day_start(target_date):
@@ -44,16 +60,17 @@ def _reply_notification_body(diary_date) -> str:
 
 async def generate_letters_for_previous_day():
     """
-    매일 00:00 KST에 실행:
-    - 전날 날짜의 일기 중
-    - 실제 작성 시각(created_at)도 전날인 일기만 자동 답장 생성
-    - 즉, 오늘 뒤늦게 작성한 과거 날짜 일기는 자동 답장 생성 X
+    스케줄된 시각에 실행:
+    - 대상 날짜(기본 전날, LETTER_TARGET_TODAY=true면 오늘)의 일기 중
+    - 실제 작성 시각(created_at)도 그 날짜인 일기만 자동 답장 생성
+    - 즉, 뒤늦게 작성한 과거 날짜 일기는 자동 답장 생성 X
     """
-    diary_date = previous_day_date()
+    diary_date = target_diary_date()
 
     logger.info(
-        "[SCHEDULER] generate_letters_for_previous_day started. diary_date=%s",
+        "[SCHEDULER] generate_letters started. diary_date=%s target_today=%s",
         diary_date,
+        TARGET_TODAY,
     )
 
     db: Session = SessionLocal()
@@ -85,9 +102,19 @@ async def generate_letters_for_previous_day():
             )
             return
 
+        logger.info(
+            "[SCHEDULER] %s eligible diaries found for diary_date=%s",
+            len(diaries),
+            diary_date,
+        )
+
         for entry in diaries:
             try:
-                if not (start_dt <= entry.created_at <= end_dt):
+                created_at = entry.created_at
+                if created_at is not None and created_at.tzinfo is None:
+                    created_at = created_at.replace(tzinfo=KST)
+
+                if not (start_dt <= created_at <= end_dt):
                     skipped_late_written += 1
                     logger.info(
                         "[SCHEDULER] skipped late-written diary. entry_id=%s entry_date=%s created_at=%s",
@@ -167,16 +194,17 @@ async def generate_letters_for_previous_day():
 
 async def send_reply_notifications_for_previous_day():
     """
-    매일 06:00 KST에 실행:
-    - 전날 정상 작성된 일기에 대한 편지가 생성된 유저 중
+    스케줄된 시각에 실행:
+    - 대상 날짜에 정상 작성된 일기에 대한 편지가 생성된 유저 중
     - 아직 읽지 않은 편지가 있는 경우
     - 웹 푸시 알림 전송
     """
-    diary_date = previous_day_date()
+    diary_date = target_diary_date()
 
     logger.info(
-        "[SCHEDULER] send_reply_notifications_for_previous_day started. diary_date=%s",
+        "[SCHEDULER] send_reply_notifications started. diary_date=%s target_today=%s",
         diary_date,
+        TARGET_TODAY,
     )
 
     await generate_letters_for_previous_day()
