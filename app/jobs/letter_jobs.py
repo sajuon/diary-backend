@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta, time, timezone
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
@@ -13,6 +13,7 @@ from app.models.diary import DiaryEntry
 from app.models.fortune import DailyFortune
 from app.models.letter import OtterLetter
 from app.services.letter_generator import generate_otter_letter
+from app.services.streak import is_on_time
 from app.services.web_push import send_web_push_to_user
 
 logger = logging.getLogger(__name__)
@@ -42,12 +43,17 @@ def target_diary_date():
     return today_date() if TARGET_TODAY else previous_day_date()
 
 
-def kst_day_start(target_date):
-    return datetime.combine(target_date, time.min, tzinfo=KST)
-
-
-def kst_day_end(target_date):
-    return datetime.combine(target_date, time.max, tzinfo=KST)
+def kst_day_bounds_utc(target_date):
+    """
+    KST 기준 하루를 DB 비교용 UTC naive 범위 [start, end)로 변환.
+    diary_entries.created_at은 UTC naive로 저장된다 (MySQL time_zone=UTC).
+    """
+    start = (
+        datetime.combine(target_date, time.min, tzinfo=KST)
+        .astimezone(timezone.utc)
+        .replace(tzinfo=None)
+    )
+    return start, start + timedelta(days=1)
 
 
 def _reply_notification_title() -> str:
@@ -82,15 +88,14 @@ async def generate_letters_for_previous_day():
     failed = 0
 
     try:
-        start_dt = kst_day_start(diary_date)
-        end_dt = kst_day_end(diary_date)
+        start_dt, end_dt = kst_day_bounds_utc(diary_date)
 
         diaries = (
             db.query(DiaryEntry)
             .filter(
                 DiaryEntry.entry_date == diary_date,
                 DiaryEntry.created_at >= start_dt,
-                DiaryEntry.created_at <= end_dt,
+                DiaryEntry.created_at < end_dt,
                 DiaryEntry.diary_type == "free",
             )
             .all()
@@ -111,11 +116,10 @@ async def generate_letters_for_previous_day():
 
         for entry in diaries:
             try:
-                created_at = entry.created_at
-                if created_at is not None and created_at.tzinfo is None:
-                    created_at = created_at.replace(tzinfo=KST)
-
-                if not (start_dt <= created_at <= end_dt):
+                # streak.py와 같은 기준: KST로 그 날짜에 쓴 일기만 자동 답장
+                if entry.created_at is None or not is_on_time(
+                    entry.entry_date, entry.created_at
+                ):
                     skipped_late_written += 1
                     logger.info(
                         "[SCHEDULER] skipped late-written diary. entry_id=%s entry_date=%s created_at=%s",
