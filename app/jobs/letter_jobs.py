@@ -91,6 +91,7 @@ async def generate_letters_for_previous_day():
                 DiaryEntry.entry_date == diary_date,
                 DiaryEntry.created_at >= start_dt,
                 DiaryEntry.created_at <= end_dt,
+                DiaryEntry.diary_type == "free",
             )
             .all()
         )

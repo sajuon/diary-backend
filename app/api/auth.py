@@ -1,5 +1,6 @@
 # /home/dori/diary-backend/app/api/auth.py
 from datetime import datetime, timezone
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
@@ -25,7 +26,11 @@ from app.schemas.auth import (
     ProfileUpdateRequest,
     OAuthLoginRequest,
 )
-from app.services.oauth import OAuthError, get_user_info_from_code
+from app.services.oauth import (
+    OAuthError,
+    get_user_info_from_code,
+    get_user_info_async,
+)
 
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
@@ -34,6 +39,20 @@ router = APIRouter(prefix="/api/auth", tags=["Auth"])
 class ReviewerLoginRequest(BaseModel):
     username: str
     password: str
+
+
+class RefreshRequest(BaseModel):
+    """TWA 등 쿠키가 유실되는 환경을 위한 fallback 바디."""
+    refresh_token: Optional[str] = None
+
+
+class NativeOAuthRequest(BaseModel):
+    """
+    네이티브 앱(카카오/구글 SDK)이 단말에서 직접 받은 access_token으로 로그인.
+    서버가 해당 토큰으로 provider에 사용자 정보를 다시 조회해서 검증한다.
+    """
+    provider: str
+    access_token: str
 
 
 def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
@@ -93,6 +112,40 @@ def _is_blacklisted(db: Session, token_jti: str) -> bool:
     return db.query(q.exists()).scalar()
 
 
+def _issue_tokens(response: Response, user: User) -> dict:
+    """access/refresh 토큰 발급 + 쿠키 설정 + 응답 바디 구성 (공통)."""
+    access_token = create_access_token({"user_id": user.id})
+    refresh_token = create_refresh_token({"user_id": user.id})
+    _set_refresh_cookie(response, refresh_token)
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+    }
+
+
+def _get_or_create_oauth_user(db: Session, provider: str, info: dict) -> User:
+    """
+    OAuth provider가 준 사용자 정보로 유저를 조회하거나 생성한다.
+    /oauth/exchange(웹)와 /oauth/native(앱)가 공유한다.
+    """
+    provider_id = info.get("id")
+    if provider_id is None:
+        raise HTTPException(status_code=400, detail="Provider did not return an id")
+
+    user = crud_user.get_user_by_provider(db, provider, provider_id)
+    if not user:
+        nickname = info.get("nickname") or f"{provider}_{provider_id}"
+        user = crud_user.create_user(
+            db,
+            nickname=nickname,
+            email=info.get("email"),
+            provider=provider,
+            provider_id=provider_id,
+        )
+    return user
+
+
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def register(data: RegisterRequest, db: Session = Depends(get_db)):
     if data.email:
@@ -121,12 +174,7 @@ def login(
     if not user or not verify_password(form_data.password, user.password or ""):
         raise HTTPException(status_code=400, detail="이메일 또는 비밀번호 오류")
 
-    access_token = create_access_token({"user_id": user.id})
-    refresh_token = create_refresh_token({"user_id": user.id})
-
-    _set_refresh_cookie(response, refresh_token)
-
-    return {"access_token": access_token, "token_type": "bearer"}
+    return _issue_tokens(response, user)
 
 
 @router.post("/reviewer-login")
@@ -153,12 +201,7 @@ def reviewer_login(
     if not user:
         raise HTTPException(status_code=404, detail="테스트 유저가 존재하지 않습니다")
 
-    access_token = create_access_token({"user_id": user.id})
-    refresh_token = create_refresh_token({"user_id": user.id})
-
-    _set_refresh_cookie(response, refresh_token)
-
-    return {"access_token": access_token, "token_type": "bearer"}
+    return _issue_tokens(response, user)
 
 
 @router.post("/oauth/exchange")
@@ -167,6 +210,7 @@ async def oauth_exchange(
     response: Response,
     db: Session = Depends(get_db),
 ):
+    """웹 OAuth: 브라우저가 받은 authorization code를 서버가 토큰으로 교환."""
     try:
         info = await get_user_info_from_code(
             data.provider,
@@ -179,37 +223,54 @@ async def oauth_exchange(
             detail="소셜 로그인 토큰이 유효하지 않습니다",
         )
 
-    provider = data.provider
-    provider_id = info.get("id")
-    if provider_id is None:
-        raise HTTPException(status_code=400, detail="Provider did not return an id")
+    user = _get_or_create_oauth_user(db, data.provider, info)
+    return _issue_tokens(response, user)
 
-    user = crud_user.get_user_by_provider(db, provider, provider_id)
-    if not user:
-        nickname = info.get("nickname") or f"{provider}_{provider_id}"
-        user = crud_user.create_user(
-            db,
-            nickname=nickname,
-            email=info.get("email"),
-            provider=provider,
-            provider_id=provider_id,
+
+@router.post("/oauth/native")
+async def oauth_native(
+    data: NativeOAuthRequest,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    """
+    네이티브 앱 OAuth: 단말의 카카오/구글 SDK가 이미 받은 access_token으로 로그인.
+
+    클라이언트가 보낸 사용자 정보를 그대로 믿지 않고, 서버가 그 토큰으로
+    provider에 직접 조회해서 검증한다. 토큰이 위조되었거나 만료되었으면
+    provider 호출이 실패하므로 남의 계정으로 로그인할 수 없다.
+    """
+    provider = (data.provider or "").strip().lower()
+    if provider not in ("kakao", "google"):
+        raise HTTPException(status_code=400, detail="지원하지 않는 provider입니다")
+
+    if not data.access_token:
+        raise HTTPException(status_code=400, detail="access_token이 없습니다")
+
+    try:
+        info = await get_user_info_async(provider, data.access_token)
+    except OAuthError:
+        raise HTTPException(
+            status_code=401,
+            detail="소셜 로그인 토큰이 유효하지 않습니다",
         )
 
-    access_token = create_access_token({"user_id": user.id})
-    refresh_token = create_refresh_token({"user_id": user.id})
-
-    _set_refresh_cookie(response, refresh_token)
-
-    return {"access_token": access_token, "token_type": "bearer"}
+    user = _get_or_create_oauth_user(db, provider, info)
+    return _issue_tokens(response, user)
 
 
 @router.post("/refresh")
 def refresh_access_token(
     request: Request,
     response: Response,
+    body: Optional[RefreshRequest] = None,
     db: Session = Depends(get_db),
 ):
+    # 쿠키 우선, 없으면 바디 fallback (TWA / 네이티브 앱 대응)
     refresh_token = request.cookies.get(settings.REFRESH_COOKIE_NAME)
+    if not refresh_token and body is not None:
+        refresh_token = body.refresh_token
+
     if not refresh_token:
         raise HTTPException(status_code=401, detail="리프레시 토큰이 없습니다")
 
@@ -249,18 +310,14 @@ def refresh_access_token(
         reason="refresh_rotated",
     )
 
-    new_access_token = create_access_token({"user_id": user.id})
-    new_refresh_token = create_refresh_token({"user_id": user.id})
-
-    _set_refresh_cookie(response, new_refresh_token)
-
-    return {"access_token": new_access_token, "token_type": "bearer"}
+    return _issue_tokens(response, user)
 
 
 @router.post("/logout")
 def logout(
     request: Request,
     response: Response,
+    body: Optional[RefreshRequest] = None,
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
 ):
@@ -280,6 +337,9 @@ def logout(
             )
 
     refresh_token = request.cookies.get(settings.REFRESH_COOKIE_NAME)
+    if not refresh_token and body is not None:
+        refresh_token = body.refresh_token
+
     if refresh_token:
         refresh_payload = decode_refresh_token(refresh_token)
         if refresh_payload:
