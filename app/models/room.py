@@ -7,7 +7,7 @@ DEFAULT_THEME_KEY = "default"
 
 
 class UserRoom(TimestampMixin, Base):
-    """해도리 방 설정. 사용자당 1행. 지금은 적용 중인 테마만, 이후 소품 배치도 여기에 붙인다."""
+    """사용자 꾸미기 설정. 사용자당 1행. 방 테마·편지지, 이후 소품 배치도 여기에 붙인다."""
 
     __tablename__ = "user_rooms"
     __table_args__ = {"mysql_engine": "InnoDB"}
@@ -20,3 +20,6 @@ class UserRoom(TimestampMixin, Base):
         unique=True,
     )
     theme_key: Mapped[str] = mapped_column(String(50), nullable=False, default=DEFAULT_THEME_KEY)
+    letter_paper_key: Mapped[str] = mapped_column(
+        String(50), nullable=False, default=DEFAULT_THEME_KEY
+    )
