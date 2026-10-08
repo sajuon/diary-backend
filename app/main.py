@@ -58,7 +58,9 @@ app.add_middleware(
 # DB init (DEV only)
 # ---------------------------
 
-if os.getenv("ENV", "dev") == "dev":
+# .env의 ENV 값으로 판단한다 (os.getenv는 .env 파일을 읽지 않음).
+# 운영 서버는 ENV=prod로 두고, 테이블 변경은 sql/ 폴더의 SQL로 직접 반영한다.
+if settings.ENV.lower() in ("dev", "development"):
     Base.metadata.create_all(bind=engine)
 
 # ---------------------------
