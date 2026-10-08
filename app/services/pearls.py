@@ -78,15 +78,21 @@ def award_reward(db: Session, user_id: int, reason: str, ref_key: str) -> Option
     """
     amount = REWARD_AMOUNTS[reason]
 
-    exists = (
-        db.query(PearlTransaction.id)
-        .filter(
-            PearlTransaction.user_id == user_id,
-            PearlTransaction.reason == reason,
-            PearlTransaction.ref_key == ref_key,
+    # 보상 지급이 실패해도 일기 저장·운세 조회 같은 본 요청은 실패하면 안 된다.
+    try:
+        exists = (
+            db.query(PearlTransaction.id)
+            .filter(
+                PearlTransaction.user_id == user_id,
+                PearlTransaction.reason == reason,
+                PearlTransaction.ref_key == ref_key,
+            )
+            .first()
         )
-        .first()
-    )
+    except Exception:
+        db.rollback()
+        logger.exception("[PEARL] reward check failed user_id=%s reason=%s", user_id, reason)
+        return None
     if exists:
         return None
 
