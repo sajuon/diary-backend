@@ -1,4 +1,4 @@
-from sqlalchemy import BigInteger, ForeignKey, String
+from sqlalchemy import JSON, BigInteger, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -23,3 +23,6 @@ class UserRoom(TimestampMixin, Base):
     letter_paper_key: Mapped[str] = mapped_column(
         String(50), nullable=False, default=DEFAULT_THEME_KEY
     )
+    # 해도리 방 소품 배치: [{"item_key": "wall_clock", "x": 30.5, "y": 25.0}, ...]
+    # x, y는 방 화면 기준 % (벽 소품은 중심, 바닥 소품은 바닥에 닿는 아래 중앙)
+    placements: Mapped[list | None] = mapped_column(JSON, nullable=True)
