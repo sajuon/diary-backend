@@ -5,12 +5,14 @@ from datetime import date
 import logging
 import re
 
+from sqlalchemy.orm import object_session
 from app.core.config import settings
 from app.models.user import User
 from app.models.diary import DiaryEntry
 from app.models.fortune import DailyFortune
 
 from app.services.letter_llm_service import request_letter_llm, LetterLLMError
+from app.services.personality import personality_prompt_for_user
 
 logger = logging.getLogger(__name__)
 
@@ -68,8 +70,12 @@ def build_llm_payload(
     user: User,
     diary_entry: DiaryEntry,
     fortune: Optional[DailyFortune],
+    personality_prompt: str = "",
 ) -> Dict[str, Any]:
     system_text = build_system_prompt()
+    if personality_prompt:
+        # 성격 말투 지시문 (services/personality.py)
+        system_text = f"{system_text}\n{personality_prompt}\n"
     user_text = build_user_prompt(user, diary_entry, fortune)
 
     return {
@@ -120,7 +126,11 @@ async def generate_otter_letter(
     if fortune and getattr(fortune, "element_hint", None):
         element_hint = fortune.element_hint
 
-    payload = build_llm_payload(user, diary_entry, fortune)
+    # 간식으로 쌓인 해도리 성격을 말투에 반영한다. user가 붙은 세션을 그대로 쓴다.
+    db = object_session(user)
+    personality_prompt = personality_prompt_for_user(db, user.id) if db is not None else ""
+
+    payload = build_llm_payload(user, diary_entry, fortune, personality_prompt)
 
     nickname = getattr(user, "nickname", None) or "사용자"
     target_date = diary_entry.entry_date

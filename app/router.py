@@ -17,6 +17,7 @@ from app.api import (
     reports,
     pearls,
     room,
+    haedori,
 )
 
 api_router = APIRouter()
@@ -36,3 +37,4 @@ api_router.include_router(web_push.router)
 api_router.include_router(reports.router)
 api_router.include_router(pearls.router)
 api_router.include_router(room.router)
+api_router.include_router(haedori.router)
