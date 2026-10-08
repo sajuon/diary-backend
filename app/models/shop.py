@@ -13,6 +13,8 @@ class ShopItem(Base):
     description = Column(Text)
     price = Column(DECIMAL(10, 2), nullable=False)  # 가격 (진주)
     item_type = Column(String(50), nullable=False)  # 'theme', 'sticker', 'background' 등
+    # 프론트가 상품을 알아보는 고유 키 (예: 테마 'night_sea'). 없으면 NULL
+    item_key = Column(String(50), nullable=True, unique=True)
     image_url = Column(String(255))
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

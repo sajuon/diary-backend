@@ -17,7 +17,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    APP_NAME: str = "Tarota Diary Backend"
+    APP_NAME: str = "Haedori Backend"
     ENV: str = "development"
     DEBUG: bool = True
 

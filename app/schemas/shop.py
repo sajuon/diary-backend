@@ -9,6 +9,7 @@ class ShopItemBase(BaseModel):
     description: Optional[str] = None
     price: Decimal
     item_type: str
+    item_key: Optional[str] = None
     image_url: Optional[str] = None
     is_active: bool = True
 
