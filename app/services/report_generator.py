@@ -221,7 +221,7 @@ def build_fallback_report(
     stats = stats or {}
 
     paragraphs = [
-        f"{month}월엔 '{top['label']}'한 날이 {top['count']}일로 가장 많았어요."
+        f"{month}월엔 '{top['label']}' 감정인 날이 {top['count']}일로 가장 많았어요."
     ]
 
     if stats.get("avg_recovery") is not None and stats["avg_recovery"] <= 2:
@@ -258,7 +258,7 @@ def build_fallback_report(
         "insights": paragraphs,
         "summary": (
             f"{month}월에는 {recorded}일을 기록했고, "
-            f"'{top['label']}'한 날이 {top['count']}일로 가장 많았어요."
+            f"'{top['label']}' 감정인 날이 {top['count']}일로 가장 많았어요."
         ),
         "highlights": highlights,
         "comment": (

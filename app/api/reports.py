@@ -23,15 +23,23 @@ router = APIRouter(prefix="/api/reports", tags=["Reports"])
 KST = ZoneInfo("Asia/Seoul")
 
 MOOD_META = {
-    "happy": {"label": "행복", "color": "#F4C97A", "group": "positive"},
-    "calm": {"label": "평온", "color": "#A8BBA5", "group": "positive"},
-    "excited": {"label": "설렘", "color": "#F2C4A8", "group": "positive"},
-    "tired": {"label": "피곤", "color": "#C4B8C4", "group": "caution"},
-    "sad": {"label": "슬픔", "color": "#A8C4D4", "group": "caution"},
-    "angry": {"label": "화남", "color": "#F2A8A8", "group": "caution"},
+    "happy": {"label": "행복", "color": "#F2B84B", "group": "positive"},
+    "excited": {"label": "설렘", "color": "#EFA0B4", "group": "positive"},
+    "calm": {"label": "평온", "color": "#9DC49A", "group": "positive"},
+    "grateful": {"label": "감사", "color": "#B6A5D6", "group": "positive"},
+    "proud": {"label": "뿌듯함", "color": "#EE9463", "group": "positive"},
+    "neutral": {"label": "무덤덤", "color": "#C2BFB4", "group": "neutral"},
+    "blank": {"label": "멍함", "color": "#B3C0CB", "group": "neutral"},
+    "tired": {"label": "피곤", "color": "#C6B49B", "group": "caution"},
+    "worried": {"label": "걱정", "color": "#93B9BE", "group": "caution"},
+    "sad": {"label": "슬픔", "color": "#A0BDD2", "group": "caution"},
+    "upset": {"label": "속상함", "color": "#8BA0C6", "group": "caution"},
+    "lonely": {"label": "외로움", "color": "#7A86A8", "group": "caution"},
+    "angry": {"label": "화남", "color": "#C87A6C", "group": "caution"},
 }
 
-MOOD_ORDER = ["happy", "calm", "excited", "tired", "sad", "angry"]
+# 감정 키·라벨·색은 프론트 components/emotion-stone.tsx의 EMOTIONS와 맞춘다.
+MOOD_ORDER = list(MOOD_META.keys())
 
 WEEKDAY_LABELS = ["월", "화", "수", "목", "금", "토", "일"]
 
@@ -178,10 +186,10 @@ def compute_stats(
         prev_label = MOOD_META[prev_top]["label"]
         diff = counts.get(prev_top, 0) - prev_counts[prev_top]
         if diff > 0:
-            stats["prev_month_diff"] = f"지난달 많았던 '{prev_label}'한 날이 {diff}일 늘었음"
+            stats["prev_month_diff"] = f"지난달 많았던 '{prev_label}' 감정인 날이 {diff}일 늘었음"
         elif diff < 0:
             stats["prev_month_diff"] = (
-                f"지난달 많았던 '{prev_label}'한 날이 {abs(diff)}일 줄었음"
+                f"지난달 많았던 '{prev_label}' 감정인 날이 {abs(diff)}일 줄었음"
             )
 
     return stats
@@ -369,7 +377,7 @@ def build_weekly_comment(day_moods: dict[date, str], recorded: int) -> str:
     else:
         flow = "한 주 내내 비슷한 결의 감정이 이어졌어요."
 
-    return f"이번 주는 '{top_label}'한 날이 가장 많았어요. {flow}"
+    return f"이번 주는 '{top_label}' 감정인 날이 가장 많았어요. {flow}"
 
 
 @router.get("/weekly", response_model=WeeklyReportResponse)
