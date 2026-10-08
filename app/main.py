@@ -42,7 +42,6 @@ if os.path.isdir("static"):
 origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "http://172.30.1.65:3000",
     "https://haedori.ludo-lab.com",
     "http://haedori.ludo-lab.com",
 ]

@@ -6,5 +6,5 @@ from app.models.base import Base  # noqa: F401
 # from app.models.fortune import DailyFortune
 # from app.models.diary import DiaryEntry
 # from app.models.letter import OtterLetter
-# from app.models.settings import NotificationSettings
+# from app.models.notification_settings import NotificationSettings
 # from app.models.auth_token import AuthToken

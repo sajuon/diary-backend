@@ -11,7 +11,10 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from app.models.base import Base
 import app.models.user
 import app.models.profile
-import app.models.settings
+import app.models.notification_settings
+import app.models.web_push_subscription
+import app.models.diary_question
+import app.models.monthly_report
 import app.models.letter
 import app.models.fortune
 import app.models.shop

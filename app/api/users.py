@@ -72,10 +72,6 @@ class UpdateMeRequest(BaseModel):
     profile_image: str | None = None
 
 
-class AddPearlsRequest(BaseModel):
-    amount: int
-
-
 @router.put("/me", response_model=UserResponse)
 def update_me(
     data: UpdateMeRequest,
@@ -95,23 +91,6 @@ def update_me(
     if updated:
         db.commit()
         db.refresh(user)
-
-    summary = calc_streak_summary(db, user.id)
-    return _user_payload(user, summary)
-
-
-@router.post("/me/add-pearls", response_model=UserResponse)
-def add_pearls(
-    data: AddPearlsRequest,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    if data.amount <= 0:
-        raise HTTPException(status_code=400, detail="추가할 진주 개수는 양수여야 합니다")
-
-    user.pearls += data.amount
-    db.commit()
-    db.refresh(user)
 
     summary = calc_streak_summary(db, user.id)
     return _user_payload(user, summary)

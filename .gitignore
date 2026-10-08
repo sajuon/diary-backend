@@ -45,3 +45,6 @@ alembic/versions/__pycache__/
 *.tar.gz
 *.zip
 *.gz
+
+# User uploads
+static/profile_images/

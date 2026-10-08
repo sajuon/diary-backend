@@ -96,16 +96,6 @@ async def get_user_info_async(provider: str, access_token: str) -> Dict[str, Opt
         raise OAuthError(f"Unsupported provider: {provider}")
 
 
-def get_user_info(provider: str, access_token: str) -> Dict[str, Optional[str]]:
-    """액세스 토큰으로부터 사용자 정보 획득 (동기, 배치/스크립트용)"""
-    if provider == "kakao":
-        return _get_kakao_user(access_token)
-    elif provider == "google":
-        return _get_google_user(access_token)
-    else:
-        raise OAuthError(f"Unsupported provider: {provider}")
-
-
 def _parse_kakao_user(data: dict) -> Dict[str, Optional[str]]:
     kakao_id = data.get("id")
     kakao_account = data.get("kakao_account", {}) or {}
@@ -145,22 +135,6 @@ async def _get_google_user_async(access_token: str) -> Dict[str, Optional[str]]:
     headers = {"Authorization": f"Bearer {access_token}"}
     async with httpx.AsyncClient() as client:
         resp = await client.get(GOOGLE_USER_URL, headers=headers, timeout=10)
-    if resp.status_code != 200:
-        raise OAuthError("Failed to fetch Google user info")
-    return _parse_google_user(resp.json())
-
-
-def _get_kakao_user(access_token: str) -> Dict[str, Optional[str]]:
-    headers = {"Authorization": f"Bearer {access_token}"}
-    resp = httpx.get(KAKAO_USER_URL, headers=headers, timeout=10)
-    if resp.status_code != 200:
-        raise OAuthError("Failed to fetch Kakao user info")
-    return _parse_kakao_user(resp.json())
-
-
-def _get_google_user(access_token: str) -> Dict[str, Optional[str]]:
-    headers = {"Authorization": f"Bearer {access_token}"}
-    resp = httpx.get(GOOGLE_USER_URL, headers=headers, timeout=10)
     if resp.status_code != 200:
         raise OAuthError("Failed to fetch Google user info")
     return _parse_google_user(resp.json())
