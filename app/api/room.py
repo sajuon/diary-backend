@@ -138,7 +138,9 @@ def set_placements(
         if p.item_key in seen:
             raise HTTPException(status_code=400, detail="같은 소품은 한 번만 놓을 수 있어요")
         seen.add(p.item_key)
-        cleaned.append({"item_key": p.item_key, "x": round(p.x, 2), "y": round(p.y, 2)})
+        cleaned.append(
+            {"item_key": p.item_key, "x": round(p.x, 2), "y": round(p.y, 2), "scale": round(p.scale, 2)}
+        )
 
     room = _get_or_create_room(db, user.id)
     room.placements = cleaned
