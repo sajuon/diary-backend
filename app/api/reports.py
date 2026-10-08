@@ -16,6 +16,7 @@ from app.models.user import User
 from app.models.diary import DiaryEntry
 from app.models.monthly_report import MonthlyReport
 from app.services.report_generator import generate_monthly_report
+from app.services.streak import is_on_time
 
 router = APIRouter(prefix="/api/reports", tags=["Reports"])
 
@@ -100,10 +101,31 @@ def fetch_entries(db: Session, user_id: int, start: date, end: date) -> list[Dia
     )
 
 
+def on_time_dates(entries: list[DiaryEntry]) -> set[date]:
+    """연속 기록에 인정되는 날짜 (streak.py와 같은 기준: 당일 작성분만)."""
+    return {
+        e.entry_date
+        for e in entries
+        if e.created_at is not None and is_on_time(e.entry_date, e.created_at)
+    }
+
+
+def calc_longest_streak(dates: set[date]) -> int:
+    longest = 0
+    current = 0
+    prev: Optional[date] = None
+    for d in sorted(dates):
+        current = current + 1 if prev is not None and (d - prev).days == 1 else 1
+        longest = max(longest, current)
+        prev = d
+    return longest
+
+
 def compute_stats(
     day_moods: dict[date, str],
     total_days: int,
     prev_counts: Counter,
+    streak_dates: set[date],
 ) -> dict:
     """LLM 프롬프트에 넘길 관찰 데이터."""
     if not day_moods:
@@ -128,14 +150,7 @@ def compute_stats(
         if MOOD_META[mood]["group"] == "caution":
             caution_by_weekday[entry_date.weekday()] += 1
 
-    longest = 1
-    current = 1
-    for i in range(1, len(sorted_dates)):
-        if (sorted_dates[i] - sorted_dates[i - 1]).days == 1:
-            current += 1
-            longest = max(longest, current)
-        else:
-            current = 1
+    longest = calc_longest_streak(streak_dates)
 
     stats: dict = {
         "total_days": total_days,
@@ -441,7 +456,8 @@ async def get_monthly_summary(
     first_day = date(year, month, 1)
     last_day = date(year, month, total_days)
 
-    picked = pick_day_entries(fetch_entries(db, user.id, first_day, last_day))
+    entries = fetch_entries(db, user.id, first_day, last_day)
+    picked = pick_day_entries(entries)
     day_moods = day_mood_map(picked)
     entry_count = len(day_moods)
 
@@ -476,7 +492,7 @@ async def get_monthly_summary(
     counts = Counter(day_moods.values())
     mood_counts = build_mood_counts(counts)
     day_summaries = build_day_summaries(picked, day_moods)
-    stats = compute_stats(day_moods, total_days, prev_counts)
+    stats = compute_stats(day_moods, total_days, prev_counts, on_time_dates(entries))
 
     report, source_type, model_name = await generate_monthly_report(
         year, month, mood_counts, day_summaries, stats
