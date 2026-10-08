@@ -15,6 +15,7 @@ from app.core.deps import get_db, get_current_user
 from app.models.user import User
 from app.models.diary import DiaryEntry
 from app.schemas.diary import DiaryCreateRequest, DiaryEntryResponse
+from app.services.pearls import REWARD_DIARY, award_daily
 from app.schemas.diary_question import DiaryQuestionResponse
 from app.services.question_llm_service import get_or_create_today_question
 from app.services.letter_llm_service import LetterLLMError
@@ -328,6 +329,11 @@ async def create_today_diary(
         entry.question_id,
         entry.summary_tag,
     )
+
+    # 일기 작성 보상: 작성한 날(KST) 기준 하루 1번, 일기 종류·소급 여부 무관
+    reward = award_daily(db, user.id, REWARD_DIARY)
+    db.refresh(entry)
+    entry.pearl_reward = reward
 
     return entry
 

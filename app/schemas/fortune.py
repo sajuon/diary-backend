@@ -3,6 +3,8 @@ from typing import Optional, Dict, Any
 
 from pydantic import BaseModel, ConfigDict
 
+from app.schemas.pearl import PearlReward
+
 
 class DailyFortuneResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -22,3 +24,6 @@ class DailyFortuneResponse(BaseModel):
 
     created_at: datetime
     updated_at: datetime
+
+    # 이번 요청으로 받은 진주 보상 (없으면 null)
+    pearl_reward: Optional[PearlReward] = None

@@ -14,6 +14,7 @@ from app.models.fortune import DailySajuAnalysis
 from app.models.profile import UserBirthProfile
 from app.models.user import User
 from app.services.saju_analysis_service import generate_saju_analysis
+from app.services.pearls import REWARD_FORTUNE, award_daily
 
 router = APIRouter(prefix="/api/saju", tags=["Saju"])
 
@@ -26,6 +27,20 @@ def kst_today_date():
 
 @router.get("/manse")
 async def get_manse(
+    type: str = Query(default="daily"),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    result = await _get_manse(type=type, user=user, db=db)
+
+    # 운세 보기 보상: 오늘의 하루/사주 운세 통틀어 하루 1번
+    if isinstance(result, dict):
+        result["pearl_reward"] = award_daily(db, user.id, REWARD_FORTUNE)
+
+    return result
+
+
+async def _get_manse(
     type: str = Query(default="daily"),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),

@@ -11,6 +11,7 @@ from app.models.profile import UserBirthProfile
 from app.models.fortune import DailyFortune
 from app.schemas.fortune import DailyFortuneResponse
 from app.services.fortune_generator import generate_daily_fortune
+from app.services.pearls import REWARD_FORTUNE, award_daily
 
 
 router = APIRouter(prefix="/api/fortune", tags=["Fortune"])
@@ -18,6 +19,14 @@ router = APIRouter(prefix="/api/fortune", tags=["Fortune"])
 
 def kst_today_date():
     return datetime.now(ZoneInfo("Asia/Seoul")).date()
+
+
+def _with_fortune_reward(db: Session, user: User, fortune: DailyFortune) -> DailyFortune:
+    """운세 보기 보상: 오늘의 하루/사주 운세 통틀어 하루 1번."""
+    reward = award_daily(db, user.id, REWARD_FORTUNE)
+    db.refresh(fortune)
+    fortune.pearl_reward = reward
+    return fortune
 
 
 @router.get("/today", response_model=DailyFortuneResponse)
@@ -36,7 +45,7 @@ async def get_today_fortune(
         .first()
     )
     if existing:
-        return existing
+        return _with_fortune_reward(db, user, existing)
 
     profile = (
         db.query(UserBirthProfile)
@@ -72,7 +81,7 @@ async def get_today_fortune(
         db.add(fortune)
         db.commit()
         db.refresh(fortune)
-        return fortune
+        return _with_fortune_reward(db, user, fortune)
 
     except IntegrityError:
         db.rollback()
@@ -86,7 +95,7 @@ async def get_today_fortune(
             .first()
         )
         if existing_after_conflict:
-            return existing_after_conflict
+            return _with_fortune_reward(db, user, existing_after_conflict)
 
         raise
 

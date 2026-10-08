@@ -15,6 +15,8 @@ import app.models.notification_settings
 import app.models.web_push_subscription
 import app.models.diary_question
 import app.models.monthly_report
+import app.models.pearl
+import app.models.letter_feedback
 import app.models.letter
 import app.models.fortune
 import app.models.shop

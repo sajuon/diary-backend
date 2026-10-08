@@ -5,6 +5,8 @@ from typing import Optional, List, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.pearl import PearlReward
+
 
 DiaryType = Literal["question", "free"]
 
@@ -82,3 +84,6 @@ class DiaryEntryResponse(BaseModel):
 
     created_at: datetime
     updated_at: datetime
+
+    # 이번 요청으로 받은 진주 보상 (없으면 null)
+    pearl_reward: Optional[PearlReward] = None

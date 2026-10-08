@@ -15,6 +15,7 @@ from app.api import (
     saju,
     web_push,
     reports,
+    pearls,
 )
 
 api_router = APIRouter()
@@ -32,3 +33,4 @@ api_router.include_router(dashboard.router)
 api_router.include_router(saju.router)
 api_router.include_router(web_push.router)
 api_router.include_router(reports.router)
+api_router.include_router(pearls.router)

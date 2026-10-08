@@ -21,6 +21,9 @@ from app.schemas.letter import (
     OtterLetterFavoriteUpdateRequest,
 )
 from app.services.letter_generator import generate_otter_letter
+from app.models.letter_feedback import LetterFeedback
+from app.schemas.pearl import LetterFeedbackRequest, LetterFeedbackResponse
+from app.services.pearls import REWARD_LETTER_FEEDBACK, award_reward
 
 
 router = APIRouter(prefix="/api/letters", tags=["Letters"])
@@ -375,3 +378,71 @@ def update_letter_favorite(
     db.refresh(letter)
 
     return letter
+
+
+def _get_own_letter(db: Session, user_id: int, letter_id: int) -> OtterLetter:
+    letter = (
+        db.query(OtterLetter)
+        .filter(OtterLetter.id == letter_id, OtterLetter.user_id == user_id)
+        .first()
+    )
+    if not letter:
+        raise HTTPException(status_code=404, detail="편지를 찾을 수 없습니다")
+    return letter
+
+
+@router.get("/{letter_id}/feedback", response_model=LetterFeedbackResponse | None)
+def get_letter_feedback(
+    letter_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _get_own_letter(db, user.id, letter_id)
+    return (
+        db.query(LetterFeedback)
+        .filter(LetterFeedback.letter_id == letter_id, LetterFeedback.user_id == user.id)
+        .first()
+    )
+
+
+@router.post("/{letter_id}/feedback", response_model=LetterFeedbackResponse)
+def send_letter_feedback(
+    letter_id: int,
+    payload: LetterFeedbackRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    편지 피드백 저장 (좋아요/아쉬워요 + 한마디).
+    처음 보낼 때만 진주 +2, 이후 수정은 보상 없음.
+    """
+    _get_own_letter(db, user.id, letter_id)
+
+    comment = (payload.comment or "").strip()
+    if not comment:
+        raise HTTPException(status_code=400, detail="한마디를 적어주세요")
+
+    feedback = (
+        db.query(LetterFeedback)
+        .filter(LetterFeedback.letter_id == letter_id, LetterFeedback.user_id == user.id)
+        .first()
+    )
+    if feedback:
+        feedback.rating = payload.rating
+        feedback.comment = comment
+    else:
+        feedback = LetterFeedback(
+            letter_id=letter_id,
+            user_id=user.id,
+            rating=payload.rating,
+            comment=comment,
+        )
+        db.add(feedback)
+
+    db.commit()
+
+    reward = award_reward(db, user.id, REWARD_LETTER_FEEDBACK, f"letter:{letter_id}")
+    db.refresh(feedback)
+    feedback.pearl_reward = reward
+    return feedback
+
