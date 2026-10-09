@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     SUMMARY_LLM_MODEL: str = "dori-summary"
     FORTUNE_LLM_MODEL: str = "saju-v0"
     SAJU_LLM_MODEL: str = "saju-reading-v0"
+    # 포춘쿠키 쪽지 문구. 비워두면 QUESTION_LLM_MODEL을 쓴다.
+    COOKIE_LLM_MODEL: str = ""
+    COOKIE_LLM_TIMEOUT_SEC: int = 15
     LLM_PROVIDER: str = "auto"
     LLM_FALLBACK_BASE_URLS: str = ""
 

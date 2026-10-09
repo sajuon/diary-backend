@@ -16,16 +16,29 @@ class CheckInResponse(BaseModel):
     pearl_reward: Optional[PearlReward] = None
 
 
-class FortuneCookieResponse(BaseModel):
-    price: int
+class TodayCookie(BaseModel):
+    kind: Literal["free", "paid"]
     reward: int
     is_jackpot: bool
+    message: str
+
+
+class FortuneCookieResponse(TodayCookie):
+    price: int
     balance: int
+
+
+class CookieChance(BaseModel):
+    amount: int
+    chance: float
 
 
 class FortuneCookieInfo(BaseModel):
     price: int
-    table: list[dict]
+    table: list[CookieChance]
+    free_table: list[CookieChance]
+    today_free: Optional[TodayCookie] = None
+    today_paid: Optional[TodayCookie] = None
 
 
 class LetterFeedbackRequest(BaseModel):
