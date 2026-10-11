@@ -340,7 +340,9 @@ async def update_today_diary(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    today = kst_today_date()
+    # 자정을 넘겨 저장해도 화면에서 열었던 날짜(entry_date)의 일기를 수정한다.
+    # entry_date가 없으면 오늘(KST). 미래 날짜는 get_requested_entry_date에서 차단.
+    today = get_requested_entry_date(data)
     diary_type = normalize_diary_type(data.diary_type)
 
     entry = get_diary_entry_or_404(
