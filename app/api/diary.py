@@ -57,10 +57,6 @@ def kst_today_date():
     return kst_now().date()
 
 
-def is_before_11pm_kst():
-    return kst_now().hour < 23
-
-
 def parse_date_string(date: str):
     try:
         return datetime.fromisoformat(date).date()
@@ -354,11 +350,8 @@ async def update_today_diary(
         diary_type=diary_type,
     )
 
-    if not is_before_11pm_kst():
-        raise HTTPException(
-            status_code=403,
-            detail="오늘 일기는 오후 11시까지만 수정할 수 있습니다",
-        )
+    # 수정 시간 제한 없음. 답장(OtterLetter)은 diary_entry_id당 1개만 생성되고
+    # 수정 시 재생성하지 않으므로, 이미 받은 답장은 그대로 유지된다.
 
     question_id = normalize_question_id(
         diary_type,
@@ -430,11 +423,7 @@ async def update_diary_by_date(
             detail="미래 날짜의 일기는 수정할 수 없습니다",
         )
 
-    if entry_date == today and not is_before_11pm_kst():
-        raise HTTPException(
-            status_code=403,
-            detail="오늘 일기는 오후 11시까지만 수정할 수 있습니다",
-        )
+    # 오늘·지난 일기 모두 시간 제한 없이 수정 가능. 답장은 재생성하지 않는다.
 
     entry = get_diary_entry_or_404(
         db=db,
