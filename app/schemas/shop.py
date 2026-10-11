@@ -14,10 +14,6 @@ class ShopItemBase(BaseModel):
     is_active: bool = True
 
 
-class ShopItemCreate(ShopItemBase):
-    pass
-
-
 class ShopItemResponse(ShopItemBase):
     model_config = ConfigDict(from_attributes=True)
 

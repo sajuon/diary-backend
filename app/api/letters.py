@@ -229,28 +229,6 @@ async def generate_letter_with_pearl(
     return letter
 
 
-@router.get("/today", response_model=OtterLetterResponse)
-def get_today_letter(
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    letter = (
-        db.query(OtterLetter)
-        .join(DiaryEntry, OtterLetter.diary_entry_id == DiaryEntry.id)
-        .filter(
-            OtterLetter.user_id == user.id,
-            DiaryEntry.diary_type == "free",
-        )
-        .order_by(OtterLetter.letter_date.desc(), OtterLetter.id.desc())
-        .first()
-    )
-
-    if not letter:
-        raise HTTPException(status_code=404, detail="편지가 아직 없습니다")
-
-    return letter
-
-
 @router.get("/{letter_id}", response_model=OtterLetterResponse)
 def get_letter_by_id(
     letter_id: int,

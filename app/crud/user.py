@@ -6,10 +6,6 @@ from app.models.user import User
 from app.models.profile import UserBirthProfile
 
 
-def get_user_by_id(db: Session, user_id: int) -> Optional[User]:
-    return db.query(User).filter(User.id == user_id).first()
-
-
 def get_user_by_email(db: Session, email: str) -> Optional[User]:
     # email may be null/None for social-only accounts
     return db.query(User).filter(User.email == email).first()
