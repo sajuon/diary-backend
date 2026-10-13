@@ -15,7 +15,8 @@ from app.core.deps import get_db, get_current_user
 from app.models.user import User
 from app.models.diary import DiaryEntry
 from app.schemas.diary import DiaryCreateRequest, DiaryEntryResponse
-from app.services.pearls import REWARD_DIARY, award_daily
+from app.services.pearls import REWARD_DIARY, award_reward
+from app.services.diary_day import diary_reward_key
 from app.schemas.diary_question import DiaryQuestionResponse
 from app.services.question_llm_service import get_or_create_today_question
 from app.services.letter_llm_service import LetterLLMError
@@ -326,8 +327,9 @@ async def create_today_diary(
         entry.summary_tag,
     )
 
-    # 일기 작성 보상: 작성한 날(KST) 기준 하루 1번, 일기 종류·소급 여부 무관
-    reward = award_daily(db, user.id, REWARD_DIARY)
+    # 일기 작성 보상: 하루 1번, 일기 종류·소급 여부 무관.
+    # 기준 날짜는 작성한 날(KST). 단 마감 전에 저장한 전날 일기는 전날 기준.
+    reward = award_reward(db, user.id, REWARD_DIARY, diary_reward_key(entry.entry_date))
     db.refresh(entry)
     entry.pearl_reward = reward
 
@@ -372,6 +374,7 @@ async def update_today_diary(
         entry.summary_tag,
     )
 
+    content_changed = entry.content != data.content
     entry.content = data.content
     entry.weather = data.weather
     entry.mood_tags = data.mood_tags
@@ -379,8 +382,11 @@ async def update_today_diary(
     entry.question_id = question_id
     entry.question_text = question_text
 
+    # 내용이 그대로면 요약 태그를 다시 만들지 않는다.
+    # (태그가 바뀌면 updated_at이 갱신돼 '수정된 일기'로 잘못 판정되므로)
     if diary_type == "free":
-        entry.summary_tag = await generate_summary_tag(data.content)
+        if content_changed or not entry.summary_tag:
+            entry.summary_tag = await generate_summary_tag(data.content)
     else:
         entry.summary_tag = None
 
@@ -451,6 +457,7 @@ async def update_diary_by_date(
         entry.summary_tag,
     )
 
+    content_changed = entry.content != data.content
     entry.content = data.content
     entry.weather = data.weather
     entry.mood_tags = data.mood_tags
@@ -458,8 +465,11 @@ async def update_diary_by_date(
     entry.question_id = question_id
     entry.question_text = question_text
 
+    # 내용이 그대로면 요약 태그를 다시 만들지 않는다.
+    # (태그가 바뀌면 updated_at이 갱신돼 '수정된 일기'로 잘못 판정되므로)
     if diary_type == "free":
-        entry.summary_tag = await generate_summary_tag(data.content)
+        if content_changed or not entry.summary_tag:
+            entry.summary_tag = await generate_summary_tag(data.content)
     else:
         entry.summary_tag = None
 

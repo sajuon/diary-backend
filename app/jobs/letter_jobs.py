@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, time, timezone
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
@@ -14,6 +14,7 @@ from app.models.fortune import DailyFortune
 from app.models.letter import OtterLetter
 from app.services.letter_generator import generate_otter_letter
 from app.services.streak import is_on_time
+from app.services.diary_day import day_window_utc_naive
 from app.services.web_push import send_web_push_to_user
 
 logger = logging.getLogger(__name__)
@@ -43,19 +44,6 @@ def target_diary_date():
     return today_date() if TARGET_TODAY else previous_day_date()
 
 
-def kst_day_bounds_utc(target_date):
-    """
-    KST 기준 하루를 DB 비교용 UTC naive 범위 [start, end)로 변환.
-    diary_entries.created_at은 UTC naive로 저장된다 (MySQL time_zone=UTC).
-    """
-    start = (
-        datetime.combine(target_date, time.min, tzinfo=KST)
-        .astimezone(timezone.utc)
-        .replace(tzinfo=None)
-    )
-    return start, start + timedelta(days=1)
-
-
 def _reply_notification_title() -> str:
     return "해도리가 답장을 보냈어요!"
 
@@ -68,8 +56,9 @@ async def generate_letters_for_previous_day():
     """
     스케줄된 시각에 실행:
     - 대상 날짜(기본 전날, LETTER_TARGET_TODAY=true면 오늘)의 일기 중
-    - 실제 작성 시각(created_at)도 그 날짜인 일기만 자동 답장 생성
-    - 즉, 뒤늦게 작성한 과거 날짜 일기는 자동 답장 생성 X
+    - 최초 작성 시각(created_at)이 그 날짜 ~ 다음 날 마감 시각(=이 배치 시각) 이전인 일기만 자동 답장
+    - 마감 전에 수정한 내용은 그대로 반영된다 (실행 시점의 최종 저장본으로 생성)
+    - 마감 이후 뒤늦게 작성한 과거 날짜 일기는 자동 답장 X (진주로 생성)
     """
     diary_date = target_diary_date()
 
@@ -88,7 +77,7 @@ async def generate_letters_for_previous_day():
     failed = 0
 
     try:
-        start_dt, end_dt = kst_day_bounds_utc(diary_date)
+        start_dt, end_dt = day_window_utc_naive(diary_date)
 
         diaries = (
             db.query(DiaryEntry)
@@ -116,7 +105,7 @@ async def generate_letters_for_previous_day():
 
         for entry in diaries:
             try:
-                # streak.py와 같은 기준: KST로 그 날짜에 쓴 일기만 자동 답장
+                # streak.py와 같은 기준: 그 날짜 ~ 다음 날 마감 전에 처음 쓴 일기만 자동 답장
                 if entry.created_at is None or not is_on_time(
                     entry.entry_date, entry.created_at
                 ):

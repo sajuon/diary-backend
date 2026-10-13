@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
 
 from app.models.diary import DiaryEntry
+from app.services.diary_day import created_within_day
 
 KST = ZoneInfo("Asia/Seoul")
 
@@ -23,13 +24,13 @@ def _to_kst(dt: datetime) -> datetime:
 
 def is_on_time(entry_date: date, created_at: datetime) -> bool:
     """
-    streak에 인정되는 '당일 작성분'인지.
+    streak·자동 답장에 인정되는 '당일 작성분'인지.
 
-    00시에 그날이 닫히고 편지 배치가 도는 구조라,
-    자정을 넘겨 쓴 지난 일기는 소급 작성으로 보고 연속에서 제외한다.
-    (진주를 소모해서 여는 대상)
+    - 그 날짜(KST)에 처음 저장했거나
+    - 다음 날 00:00 ~ 마감 시각(편지 배치 시각) 사이에 처음 저장한 경우
+    마감 이후에 쓴 지난 일기는 소급 작성으로 보고 제외한다 (진주로 답장을 여는 대상).
     """
-    return _to_kst(created_at).date() == entry_date
+    return created_within_day(entry_date, _to_kst(created_at))
 
 
 def calc_streak_summary(db: Session, user_id: int) -> dict:
