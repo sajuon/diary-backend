@@ -6,6 +6,8 @@ from app.models.room import DEFAULT_THEME_KEY, UserRoom
 from app.models.shop import ShopItem, UserPurchase
 from app.models.user import User
 from app.schemas.room import (
+    MAX_SCALE,
+    MIN_SCALE,
     LetterPaperUpdateRequest,
     PlacementsUpdateRequest,
     RoomResponse,
@@ -53,6 +55,25 @@ def _get_or_create_room(db: Session, user_id: int) -> UserRoom:
     return room
 
 
+def _normalize_placement(p: dict) -> dict:
+    """DB에 남은 예전 값(범위 밖 배율·위치)을 지금 허용 범위로 맞춘다. 조회 실패를 막기 위함."""
+    try:
+        scale = float(p.get("scale", 1.0))
+    except (TypeError, ValueError):
+        scale = 1.0
+    try:
+        x = float(p.get("x", 50))
+        y = float(p.get("y", 50))
+    except (TypeError, ValueError):
+        x, y = 50.0, 50.0
+    return {
+        "item_key": p.get("item_key"),
+        "x": round(min(100.0, max(0.0, x)), 2),
+        "y": round(min(100.0, max(0.0, y)), 2),
+        "scale": round(min(MAX_SCALE, max(MIN_SCALE, scale)), 2),
+    }
+
+
 def _room_payload(db: Session, user_id: int) -> dict:
     owned_themes = _owned_keys(db, user_id, ITEM_TYPE_THEME)
     owned_papers = _owned_keys(db, user_id, ITEM_TYPE_LETTER_PAPER)
@@ -70,7 +91,8 @@ def _room_payload(db: Session, user_id: int) -> dict:
     owned_items = _purchased_keys(db, user_id, ITEM_TYPE_ROOM_ITEM)
     owned_item_set = set(owned_items)
     placements = [
-        p for p in ((room.placements if room else None) or [])
+        _normalize_placement(p)
+        for p in ((room.placements if room else None) or [])
         if isinstance(p, dict) and p.get("item_key") in owned_item_set
     ]
 
