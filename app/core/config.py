@@ -54,7 +54,8 @@ class Settings(BaseSettings):
     SAJU_LLM_MODEL: str = "saju-reading-v0"
     # 포춘쿠키 쪽지 문구. 비워두면 QUESTION_LLM_MODEL을 쓴다.
     COOKIE_LLM_MODEL: str = ""
-    COOKIE_LLM_TIMEOUT_SEC: int = 15
+    # 쿠키 여는 데 3초 안팎이 되도록 짧게. 넘으면 미리 써둔 문구를 쓴다
+    COOKIE_LLM_TIMEOUT_SEC: float = 1.5
     LLM_PROVIDER: str = "auto"
     LLM_FALLBACK_BASE_URLS: str = ""
 
