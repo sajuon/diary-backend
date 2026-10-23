@@ -13,13 +13,20 @@ from app.models.diary import DiaryEntry
 from app.models.fortune import DailyFortune
 from app.models.letter import OtterLetter
 from app.services.letter_generator import generate_otter_letter
-from app.services.streak import is_on_time
+from app.services.streak import is_on_time, late_grace
 from app.services.web_push import send_web_push_to_user
 
 logger = logging.getLogger(__name__)
 KST = ZoneInfo("Asia/Seoul")
 
 TARGET_TODAY = bool(settings.LETTER_TARGET_TODAY)
+
+# 다시 시도해도 결과가 같은 푸시 생략 사유 (web_push.send_web_push_to_user의 reason)
+FINAL_SKIP_REASONS = {
+    "push_disabled",
+    "reply_disabled",
+    "no_active_subscriptions",
+}
 
 
 def kst_now():
@@ -68,7 +75,7 @@ async def generate_letters_for_previous_day():
     """
     스케줄된 시각에 실행:
     - 대상 날짜(기본 전날, LETTER_TARGET_TODAY=true면 오늘)의 일기 중
-    - 실제 작성 시각(created_at)도 그 날짜인 일기만 자동 답장 생성
+    - 그 날짜 0시 ~ 다음 날 배치 시각 전에 작성한 일기만 자동 답장 생성 (streak.is_on_time)
     - 즉, 뒤늦게 작성한 과거 날짜 일기는 자동 답장 생성 X
     """
     diary_date = target_diary_date()
@@ -89,6 +96,8 @@ async def generate_letters_for_previous_day():
 
     try:
         start_dt, end_dt = kst_day_bounds_utc(diary_date)
+        # 배치 시각 전까지 쓴 전날 일기도 포함 (최종 판정은 아래 is_on_time)
+        end_dt = end_dt + late_grace()
 
         diaries = (
             db.query(DiaryEntry)
@@ -116,7 +125,7 @@ async def generate_letters_for_previous_day():
 
         for entry in diaries:
             try:
-                # streak.py와 같은 기준: KST로 그 날짜에 쓴 일기만 자동 답장
+                # streak.py와 같은 기준: 그 날짜 ~ 다음 날 배치 시각 전에 쓴 일기만 자동 답장
                 if entry.created_at is None or not is_on_time(
                     entry.entry_date, entry.created_at
                 ):
@@ -256,7 +265,10 @@ async def send_reply_notifications_for_previous_day():
             sent += int(result.get("sent") or 0)
             skipped += int(result.get("skipped") or 0)
 
-            if (result.get("sent") or 0) > 0:
+            # 처리 완료로 기록 → 재시작(startup catch-up)마다 같은 편지를 다시 시도하지 않음
+            # - 보냄 / 보낼 곳 없음(구독 없음·알림 꺼짐)은 완료
+            # - 구독은 있는데 전부 실패한 경우만 다음 실행에서 재시도
+            if (result.get("sent") or 0) > 0 or result.get("reason") in FINAL_SKIP_REASONS:
                 letter.reply_notified_at = kst_now()
                 db.commit()
 

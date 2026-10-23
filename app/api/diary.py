@@ -16,6 +16,7 @@ from app.models.user import User
 from app.models.diary import DiaryEntry
 from app.schemas.diary import DiaryCreateRequest, DiaryEntryResponse
 from app.services.pearls import REWARD_DIARY, award_daily
+from app.services.streak import is_on_time
 from app.schemas.diary_question import DiaryQuestionResponse
 from app.services.question_llm_service import get_or_create_today_question
 from app.services.letter_llm_service import LetterLLMError
@@ -326,8 +327,15 @@ async def create_today_diary(
         entry.summary_tag,
     )
 
-    # 일기 작성 보상: 작성한 날(KST) 기준 하루 1번, 일기 종류·소급 여부 무관
-    reward = award_daily(db, user.id, REWARD_DIARY)
+    # 일기 작성 보상: 하루 1번, 일기 종류 무관.
+    # 배치 시각 전에 저장한 전날 일기는 전날 몫으로 지급 (streak·답장과 같은 기준),
+    # 그 외(오늘 일기·소급 작성)는 오늘 몫.
+    reward_day = (
+        entry_date
+        if entry.created_at is not None and is_on_time(entry_date, entry.created_at)
+        else kst_today_date()
+    )
+    reward = award_daily(db, user.id, REWARD_DIARY, reward_day.isoformat())
     db.refresh(entry)
     entry.pearl_reward = reward
 
