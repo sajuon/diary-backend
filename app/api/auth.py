@@ -112,22 +112,30 @@ def _is_blacklisted(db: Session, token_jti: str) -> bool:
     return db.query(q.exists()).scalar()
 
 
-def _issue_tokens(response: Response, user: User) -> dict:
-    """access/refresh 토큰 발급 + 쿠키 설정 + 응답 바디 구성 (공통)."""
+def _issue_tokens(response: Response, user: User, is_new_user: Optional[bool] = None) -> dict:
+    """access/refresh 토큰 발급 + 쿠키 설정 + 응답 바디 구성 (공통).
+
+    is_new_user: 이번 요청으로 계정이 새로 만들어졌는지 (소셜 로그인에서만 전달).
+    프론트는 이 값으로 첫 사용자 소개(온보딩) 노출 여부를 정한다.
+    """
     access_token = create_access_token({"user_id": user.id})
     refresh_token = create_refresh_token({"user_id": user.id})
     _set_refresh_cookie(response, refresh_token)
-    return {
+    body = {
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "bearer",
     }
+    if is_new_user is not None:
+        body["is_new_user"] = is_new_user
+    return body
 
 
-def _get_or_create_oauth_user(db: Session, provider: str, info: dict) -> User:
+def _get_or_create_oauth_user(db: Session, provider: str, info: dict) -> tuple[User, bool]:
     """
     OAuth provider가 준 사용자 정보로 유저를 조회하거나 생성한다.
     /oauth/exchange(웹)와 /oauth/native(앱)가 공유한다.
+    반환: (user, 이번에 새로 만들었는지)
     """
     provider_id = info.get("id")
     if provider_id is None:
@@ -143,7 +151,8 @@ def _get_or_create_oauth_user(db: Session, provider: str, info: dict) -> User:
             provider=provider,
             provider_id=provider_id,
         )
-    return user
+        return user, True
+    return user, False
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
@@ -223,8 +232,8 @@ async def oauth_exchange(
             detail="소셜 로그인 토큰이 유효하지 않습니다",
         )
 
-    user = _get_or_create_oauth_user(db, data.provider, info)
-    return _issue_tokens(response, user)
+    user, created = _get_or_create_oauth_user(db, data.provider, info)
+    return _issue_tokens(response, user, is_new_user=created)
 
 
 @router.post("/oauth/native")
@@ -255,8 +264,8 @@ async def oauth_native(
             detail="소셜 로그인 토큰이 유효하지 않습니다",
         )
 
-    user = _get_or_create_oauth_user(db, provider, info)
-    return _issue_tokens(response, user)
+    user, created = _get_or_create_oauth_user(db, provider, info)
+    return _issue_tokens(response, user, is_new_user=created)
 
 
 @router.post("/refresh")
