@@ -7,9 +7,11 @@ LLM으로 매번 새 문구를 만들고, 실패하거나 너무 오래 걸리�
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import secrets
+import time
 
 from app.core.config import settings
 from app.services.letter_llm_service import request_letter_llm
@@ -106,13 +108,23 @@ async def generate_cookie_message(recent_messages: list[str]) -> tuple[str, str]
         "_request_options": {"timeout_sec": settings.COOKIE_LLM_TIMEOUT_SEC},
     }
 
+    # httpx 타임아웃은 연결·쓰기·읽기 단계별로 걸려 전체 시간이 길어질 수 있으므로
+    # 전체 대기 시간 상한을 asyncio.wait_for로 한 번 더 건다.
+    deadline = float(settings.COOKIE_LLM_TIMEOUT_SEC)
+    started = time.monotonic()
     try:
-        result = await request_letter_llm(payload)
+        result = await asyncio.wait_for(request_letter_llm(payload), timeout=deadline)
         message = _clean(result.get("content") or "")
         if 4 <= len(message) <= MESSAGE_MAX_LEN and message not in recent_messages:
+            logger.info("[COOKIE] llm ok elapsed=%.2fs", time.monotonic() - started)
             return message, "llm"
         logger.warning("[COOKIE] unusable llm message len=%s text=%r", len(message), message[:80])
+    except asyncio.TimeoutError:
+        logger.warning("[COOKIE] llm timeout limit=%.1fs elapsed=%.2fs", deadline, time.monotonic() - started)
     except Exception as e:  # LLM 실패는 쿠키 열기를 막지 않는다
-        logger.warning("[COOKIE] llm failed error=%s", e)
+        logger.warning(
+            "[COOKIE] llm failed elapsed=%.2fs error=%s: %s",
+            time.monotonic() - started, type(e).__name__, e,
+        )
 
     return pick_fallback_message(set(recent_messages)), "fallback"
