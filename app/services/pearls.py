@@ -147,8 +147,11 @@ def award_reward(db: Session, user_id: int, reason: str, ref_key: str) -> Option
     }
 
 
-def award_daily(db: Session, user_id: int, reason: str) -> Optional[dict]:
-    return award_reward(db, user_id, reason, kst_today_key())
+def award_daily(
+    db: Session, user_id: int, reason: str, day_key: Optional[str] = None
+) -> Optional[dict]:
+    """하루 1회 보상. day_key 기본값은 오늘(KST)."""
+    return award_reward(db, user_id, reason, day_key or kst_today_key())
 
 
 def roll_fortune_cookie(kind: str = COOKIE_PAID) -> int:
