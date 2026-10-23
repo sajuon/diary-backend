@@ -73,10 +73,11 @@ def _headers() -> dict[str, str]:
 
 
 def _timeout(total_override: Optional[float] = None) -> httpx.Timeout:
-    configured = total_override
-    if configured is None:
-        configured = getattr(settings, "LLM_TIMEOUT_SEC", 180)
-    total = max(5.0, float(configured))
+    if total_override is not None:
+        # 호출부가 명시한 값은 그대로 존중한다 (포춘쿠키처럼 짧은 대기가 필요한 경우)
+        total = max(0.5, float(total_override))
+    else:
+        total = max(5.0, float(getattr(settings, "LLM_TIMEOUT_SEC", 180)))
     connect_timeout = min(3.0, total)
     return httpx.Timeout(
         total,
@@ -126,7 +127,7 @@ async def request_letter_llm(payload: Dict[str, Any]) -> Dict[str, Any]:
             response = await client.post(url, headers=headers, json=request_payload)
     except httpx.RequestError as e:
         logger.exception("[LETTER_LLM] request error error=%s", str(e))
-        raise LetterLLMError(f"LUDO API 요청 실패: {e}") from e
+        raise LetterLLMError(f"LUDO API 요청 실패: {type(e).__name__}: {e}") from e
 
     logger.info(
         "[LETTER_LLM] response received status=%s model=%s",
