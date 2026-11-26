@@ -1,3 +1,57 @@
+# HAEDORI (해도리) — Backend
+
+개인화 일기와 AI 피드백 편지 서비스의 API 서버입니다. 일기 작성, 편지 생성, 운세, 사용자 인증, 알림 및 보상 기능을 연결합니다.
+
+## Engineering overview
+
+- FastAPI, SQLAlchemy, Pydantic, Alembic, JWT 및 OAuth 연동.
+- 비동기 LLM 요청과 응답 후처리, 포춘쿠키 생성 실패 시 대체 문구 제공.
+- KST 기준 편지 생성·알림 스케줄링과 서버 재시작 시 보완 실행.
+- 보상 중복 지급 방지, 잔액 갱신 및 거래 기록의 트랜잭션 처리.
+- 사용자별 웹 푸시 구독 및 알림 설정.
+
+```mermaid
+flowchart LR
+ A[Web client] --> B[FastAPI]
+ B --> C[SQLAlchemy / database]
+ B --> D[LLM service]
+ E[Scheduler] --> B
+ B --> F[Web push]
+```
+
+## Selected implementation details
+
+| Concern | Implementation | Source |
+|---|---|---|
+| LLM availability | Configured request timeout plus asyncio.wait_for; invalid or repeated responses fall back to a message pool | [fortune_cookie_message.py](app/services/fortune_cookie_message.py) |
+| Scheduled workflows | KST cron, coalescing, max_instances=1, 12-hour misfire grace and startup catch-up | [scheduler.py](app/jobs/scheduler.py) |
+| Reward consistency | User/reason/reference checks, balance update, transaction record, rollback on integrity errors | [pearls.py](app/services/pearls.py) |
+| Authentication | JWT and social login configuration | [auth.py](app/api/auth.py) |
+| Notifications | Subscription and preference handling | [web_push.py](app/services/web_push.py) |
+
+The timeout is a configured safeguard, not a measured end-to-end latency guarantee. Scheduler limits apply within a scheduler instance; multi-worker coordination is not established here.
+
+## Local setup and verification
+
+Use an isolated development database and synthetic diary entries. Review [configuration](app/core/config.py) for required settings including DATABASE_URL, SECRET_KEY and applicable OAuth/LLM credentials. Never commit real credentials or user data.
+
+```bash
+python -m venv .venv
+# Activate the virtual environment for your OS
+pip install -r requirements.txt
+# Review missing runtime dependencies and configure a development .env
+# before applying migrations or starting the service.
+uvicorn app.main:app --reload
+```
+
+API documentation: `/docs` and `/redoc`. The committed requirements file may not cover all current imports (e.g. APScheduler); a clean-clone run, migrations and production DB configuration were not verified for this documentation update. The database is configured by DATABASE_URL; the historical PostgreSQL dependency is not proof of the currently deployed engine.
+
+Frontend: [diary-frontend](https://github.com/sajuon/diary-frontend).
+
+## Historical documentation
+
+The original README is retained below as historical context; older feature assumptions and setup examples are not authoritative for the current deployment.
+
 # 🦦 Otter Diary Backend
 
 사주 기반 **데일리 다이어리 앱**의 백엔드 서버입니다.  
